@@ -1,0 +1,16 @@
+#[address(0xB8000)]
+volatile let VIDEO_MEM: *u16;
+
+#[interrupt]
+fn keyboard_handler() -> void {
+    let code: u8 = inb(cast<u16>(0x60));
+}
+
+fn kernel_main() -> void {
+    let color: u16 = cast<u16>(0x0F00);
+    let letter: u16 = cast<u16>(0x42); // 'B'
+    unsafe {
+        *VIDEO_MEM = letter | color;
+    }
+    loop { asm("hlt"); }
+}
