@@ -1,0 +1,15 @@
+[package]
+name = "bedrockc"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bedrockc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+# inkwell = { version = "0.4.0", features = ["llvm16-0"] }
+
+[build-dependencies]
+embed-resource = "2.4"
