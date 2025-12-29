@@ -5,21 +5,8 @@ BedRock is a strict, zero-runtime, bare-metal programming language designed spec
 BedRock is designed to boot directly on x86_64 or ARM hardware without any underlying OS or C-standard library.
 
 ## Installation & Setup
+Just double click on BedRock_Setup.bat
 
-### Prerequisites
-To build the BedRock compiler, you need **Rust** installed on your system.
-
-### Building the Compiler
-1. Clone the repository.
-2. Navigate to the `compiler` directory.
-3. Build the compiler using Cargo:
-
-```bash
-cd compiler
-cargo build --release
-```
-
-This will produce the `bedrockc.exe` executable in the `target/release/` directory.
 
 ## Compiler CLI Usage
 
