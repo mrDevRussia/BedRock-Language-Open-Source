@@ -1,0 +1,15 @@
+fn kernel_main() -> void {
+
+    clear();
+
+    print("BedRock OS v1.0", 15);
+    newline();
+    print("----------------", 7);
+    newline();
+    print("Kernel Loaded Successfully!", 10);
+    newline();
+
+    loop {
+        asm("hlt");
+    }
+}
