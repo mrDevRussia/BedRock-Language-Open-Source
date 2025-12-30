@@ -38,7 +38,7 @@ dw 0xAA55
 2. Manual Sector Padding and Alignment
 BIOS reads disk data in fixed 512-byte sectors. If the compiled kernel does not perfectly fill a sector, it must be padded with null bytes to prevent hardware errors or undefined behavior.
 Calculation Logic:
- * Compile the kernel to get kernel.bin.
+ * Compile the kernel to get kernel.bin. [ type in CMD with admin access insdie kernel.br directory 'bedrockco.exe kernel.br --format bin' ]
  * Determine the size of kernel.bin in bytes (represented as X).
  * Calculate the required padding: 512 - X = Padding Size.
 Creating the Padding File (Windows CMD):
