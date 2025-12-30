@@ -43,7 +43,7 @@ Calculation Logic:
  * Calculate the required padding: 512 - X = Padding Size.
 Creating the Padding File (Windows CMD):
 Use the fsutil tool to generate a file containing only null bytes:
-fsutil file createnew padding.bin [Padding Size]
+[fsutil file createnew padding.bin [Padding Size] ]
 
 Build and Execution Workflow
 Follow these steps to build and boot the BedRock OS:
