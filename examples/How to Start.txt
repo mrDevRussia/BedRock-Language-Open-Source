@@ -1,0 +1,23 @@
+1. If you have NASM use it to create boot.bin with this command after navigating
+   to exaples dir, " nasm boot.asm -f bin -o boot.bin"
+
+   if you dont have nasm just skip this step becuase there is already boot.bin to use
+ 
+2. open CMD as admin, nav to examples dir, type this command
+to compile kernel.br to raw binary file " bedrockco.exe kernel.br --format bin"
+
+3. create padding file to fill the rest of the kernel file with blank to make its size 512 byte exactly
+by typing this command "fsutil file createnew padding.bin (size of kernel.bin - 512)"
+
+or
+
+use the standard padding.bin its already done.
+
+
+4. merge them as img file by " copy /b boot.bin + kernel.bin + padding.bin BedRockOS.img "
+
+then run on any VM
+i recommend you to use Qemu vm "its easy"
+jst use this command in cmd in the same dir
+( "C:\Program Files\qemu\qemu-system-x86_64.exe" -drive format=raw,file=BedRockOS.img )
+

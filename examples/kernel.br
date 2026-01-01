@@ -1,14 +1,14 @@
 fn kernel_main() -> void {
-
     clear();
-
-    print("BedRock OS v1.0", 15);
-    newline();
-    print("----------------", 7);
-    newline();
-    print("Kernel Loaded Successfully!", 10);
+    
+    print("BedRock OS Technical Update", 14);
     newline();
 
+    let vga: *u16 = 0xB8000;
+    *vga = 0x2104; 
+
+    print("Direct Memory Access: SUCCESS", 10);
+    
     loop {
         asm("hlt");
     }

@@ -4,7 +4,7 @@ pub enum Token {
     Identifier(String), Number(u64), StringLiteral(String),
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Colon, SemiColon, Comma, Equal, Star, Arrow, Pipe, Hash, Plus, Minus,
-    LessThan, GreaterThan, Dot, EOF, // أضفنا Dot هنا
+    LessThan, GreaterThan, Dot, EOF,
 }
 
 pub struct Lexer {
@@ -40,7 +40,7 @@ impl Lexer {
             '|' => { self.pos += 1; Token::Pipe }
             '#' => { self.pos += 1; Token::Hash }
             '+' => { self.pos += 1; Token::Plus }
-            '.' => { self.pos += 1; Token::Dot } // التعامل مع النقطة
+            '.' => { self.pos += 1; Token::Dot }
             '<' => { self.pos += 1; Token::LessThan }
             '>' => { self.pos += 1; Token::GreaterThan }
             '-' => {
@@ -86,10 +86,13 @@ impl Lexer {
 
     fn read_number(&mut self) -> Token {
         let start = self.pos;
+        // دعم الـ Hexadecimal 0x
         if self.input[self.pos] == '0' && self.pos+1 < self.input.len() && self.input[self.pos+1].to_ascii_lowercase() == 'x' {
             self.pos += 2;
+            let hex_start = self.pos;
             while self.pos < self.input.len() && self.input[self.pos].is_digit(16) { self.pos += 1; }
-            let num = u64::from_str_radix(&self.input[start+2..self.pos].iter().collect::<String>(), 16).unwrap();
+            let hex_str: String = self.input[hex_start..self.pos].iter().collect();
+            let num = u64::from_str_radix(&hex_str, 16).expect("Invalid hex number");
             return Token::Number(num);
         }
         while self.pos < self.input.len() && self.input[self.pos].is_digit(10) { self.pos += 1; }

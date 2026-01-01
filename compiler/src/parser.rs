@@ -20,7 +20,6 @@ pub enum Statement {
     Let { name: String, ty: Type, value: Option<Expression>, volatile: bool },
     Expression(Expression),
     Loop(Vec<Statement>),
-    Unsafe(Vec<Statement>),
     Asm(String),
     Assignment(Box<Expression>, Box<Expression>),
     Clear,
@@ -32,8 +31,6 @@ pub enum Statement {
 pub enum Expression {
     Number(u64), Variable(String),
     BinaryOp(Box<Expression>, Op, Box<Expression>),
-    Call(String, Vec<Expression>),
-    Cast(Type, Box<Expression>),
     Dereference(Box<Expression>),
 }
 
@@ -48,10 +45,11 @@ impl Parser {
     pub fn parse_program(&mut self) -> Program {
         let mut globals = Vec::new();
         let mut functions = Vec::new();
-        while self.peek() != Token::EOF {
+        while !self.is_at_end() {
             let attrs = self.parse_attributes();
             if self.check(Token::Fn) { functions.push(self.parse_function(attrs)); }
-            else { globals.push(self.parse_global(attrs)); }
+            else if self.check(Token::Let) || self.check(Token::Volatile) { globals.push(self.parse_global(attrs)); }
+            else { self.advance(); }
         }
         Program { globals, functions }
     }
@@ -79,7 +77,10 @@ impl Parser {
         self.expect(Token::Fn);
         let name = match self.advance() { Token::Identifier(s) => s, _ => panic!("Fn name expected") };
         self.expect(Token::LParen);
-        while !self.check(Token::RParen) { self.advance(); if self.match_token(Token::Comma) {continue;} }
+        while !self.check(Token::RParen) && !self.is_at_end() { 
+            self.advance(); 
+            if self.match_token(Token::Comma) { continue; } 
+        }
         self.expect(Token::RParen);
         self.expect(Token::Arrow);
         let ret_type = self.parse_type();
@@ -99,7 +100,7 @@ impl Parser {
 
     fn parse_block(&mut self) -> Vec<Statement> {
         let mut stmts = Vec::new();
-        while !self.check(Token::RBrace) && !self.check(Token::EOF) { stmts.push(self.parse_statement()); }
+        while !self.check(Token::RBrace) && !self.is_at_end() { stmts.push(self.parse_statement()); }
         self.expect(Token::RBrace);
         stmts
     }
@@ -113,17 +114,18 @@ impl Parser {
             let val = self.parse_expression();
             self.expect(Token::SemiColon);
             Statement::Let { name, ty, value: Some(val), volatile: false }
-        } else if self.match_token(Token::Identifier("clear".to_string())) {
-            self.expect(Token::LParen); self.expect(Token::RParen); self.expect(Token::SemiColon);
+        } else if self.check(Token::Identifier("clear".to_string())) {
+            self.advance(); self.expect(Token::LParen); self.expect(Token::RParen); self.expect(Token::SemiColon);
             Statement::Clear
-        } else if self.match_token(Token::Identifier("newline".to_string())) {
-            self.expect(Token::LParen); self.expect(Token::RParen); self.expect(Token::SemiColon);
+        } else if self.check(Token::Identifier("newline".to_string())) {
+            self.advance(); self.expect(Token::LParen); self.expect(Token::RParen); self.expect(Token::SemiColon);
             Statement::Newline
-        } else if self.match_token(Token::Identifier("print".to_string())) {
-            self.expect(Token::LParen);
+        } else if self.check(Token::Identifier("print".to_string())) {
+            self.advance(); self.expect(Token::LParen);
             let s = match self.advance() { Token::StringLiteral(s) => s, _ => panic!("Print string expected") };
-            self.expect(Token::Comma);
-            let col = match self.advance() { Token::Number(n) => n as u8, _ => 0x07 };
+            let col = if self.match_token(Token::Comma) {
+                match self.advance() { Token::Number(n) => n as u8, _ => 0x07 }
+            } else { 0x07 };
             self.expect(Token::RParen); self.expect(Token::SemiColon);
             Statement::Print(s, col)
         } else if self.match_token(Token::Loop) {
@@ -143,10 +145,22 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Expression {
+        self.parse_additive()
+    }
+
+    fn parse_additive(&mut self) -> Expression {
+        let mut left = self.parse_bitwise();
+        while self.check(Token::Plus) || self.check(Token::Minus) {
+            let op = if self.match_token(Token::Plus) { Op::Add } else { self.advance(); Op::Sub };
+            left = Expression::BinaryOp(Box::new(left), op, Box::new(self.parse_bitwise()));
+        }
+        left
+    }
+
+    fn parse_bitwise(&mut self) -> Expression {
         let mut left = self.parse_unary();
-        while self.check(Token::Pipe) || self.check(Token::Plus) {
-            let op = if self.match_token(Token::Pipe) { Op::Or } else { self.advance(); Op::Add };
-            left = Expression::BinaryOp(Box::new(left), op, Box::new(self.parse_unary()));
+        while self.match_token(Token::Pipe) {
+            left = Expression::BinaryOp(Box::new(left), Op::Or, Box::new(self.parse_unary()));
         }
         left
     }
@@ -157,10 +171,16 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Expression {
-        match self.advance() {
-            Token::Number(n) => Expression::Number(n),
-            Token::Identifier(s) => Expression::Variable(s),
-            _ => panic!("Expression error"),
+        if self.match_token(Token::LParen) {
+            let expr = self.parse_expression();
+            self.expect(Token::RParen);
+            expr
+        } else {
+            match self.advance() {
+                Token::Number(n) => Expression::Number(n),
+                Token::Identifier(s) => Expression::Variable(s),
+                _ => panic!("Expression error at {:?}", self.peek()),
+            }
         }
     }
 
@@ -170,7 +190,7 @@ impl Parser {
             match self.advance() {
                 Token::Identifier(s) => match s.as_str() {
                     "u8" => Type::U8, "u16" => Type::U16, "u32" => Type::U32, "void" => Type::Void,
-                    _ => panic!("Unknown type"),
+                    _ => panic!("Unknown type: {}", s),
                 },
                 _ => panic!("Type expected"),
             }
@@ -179,11 +199,8 @@ impl Parser {
 
     fn peek(&self) -> Token { self.tokens.get(self.pos).cloned().unwrap_or(Token::EOF) }
     fn check(&self, t: Token) -> bool { self.peek() == t }
-    fn advance(&mut self) -> Token { let t = self.peek(); self.pos += 1; t }
+    fn is_at_end(&self) -> bool { self.peek() == Token::EOF }
+    fn advance(&mut self) -> Token { let t = self.peek(); if !self.is_at_end() { self.pos += 1; } t }
     fn match_token(&mut self, t: Token) -> bool { if self.check(t) { self.advance(); true } else { false } }
-    
-    fn expect(&mut self, t: Token) { 
-        let t_clone = t.clone();
-        if !self.match_token(t) { panic!("Expected {:?} got {:?}", t_clone, self.peek()); } 
-    }
+    fn expect(&mut self, t: Token) { if !self.match_token(t.clone()) { panic!("Expected {:?} got {:?}", t, self.peek()); } }
 }
