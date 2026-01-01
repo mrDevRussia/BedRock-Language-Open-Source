@@ -1,70 +1,49 @@
-# BedRock Programming Language
-BedRock is a minimalist, low-level, statically-typed systems programming language designed to run on Bare Metal (x86). It compiles directly to machine code, enabling the development of self-booting kernels and low-level system software without any external dependencies or an underlying operating system.
-Technical Specifications
-Data Types
- * u8: 8-bit unsigned integer.
- * u16: 16-bit unsigned integer.
- * u32: 32-bit unsigned integer.
- * void: Indicates no return value.
- * *T: Pointer to a specific type.
-# Language Keywords and Built-in Functions
- * fn: Declares a function.
- * let: Declares a global or local variable.
- * loop: Initiates an infinite loop block.
- * asm: Allows embedding raw assembly instructions.
- * volatile: Prevents compiler optimizations on memory-mapped hardware.
- * clear(): Built-in command to clear the VGA text-mode screen.
- * print(string, color): Prints text to the screen using BIOS interrupts.
- * newline(): Moves the cursor to the next line.
-# The Boot Process and Image Creation
-To execute a BedRock kernel on physical hardware or an emulator, the compiled binary must be integrated with a bootloader and aligned to the hardware's sector requirements.
-1. The Bootsector (boot.asm)
-The system requires a standard 512-byte bootsector to load the kernel from the disk into memory and transfer control to the BedRock entry point.
-[bits 16]
-[org 0x7c00]
+# BedRock systems programming language 
 
-mov [BOOT_DRIVE], dl
-mov bp, 0x9000
-mov sp, bp
 
-call load_kernel
-jmp 0x1000 ; Jump to the BedRock kernel memory location
+Functional Keywords & Usage
+These are the core keywords currently supported by the BedRock compiler:
+| Keyword | Description | Real-world OS Usage |
+|---|---|---|
+| fn | Defines a function. | fn kernel_main() -> void - The entry point of your OS. |
+| let | Declares a variable or memory pointer. | let vga: *u8 = 0xB8000; - Targeting the screen buffer. |
+| void | Specifies a function that returns nothing. | Used for procedures like clear() or kernel_main. |
+| loop | Creates an infinite execution block. | Used at the end of the kernel to prevent the CPU from executing random memory. |
+| asm | Inlines raw Assembly instructions. | asm("hlt"); - Putting the CPU in a halt state to save power. |
+| u8 / u16 | Unsigned 8-bit and 16-bit integers. | u8 for ASCII characters; u16 for VGA words (character + attribute). |
 
-%include "disk.asm"
 
-times 510-($-$$) db 0
-dw 0xAA55
+Built-in Hardware Commands
+BedRock includes specialized commands that map directly to BIOS Interrupts and Hardware I/O:
+ * clear(): Resets the VGA text buffer, clearing the screen to black.
+ * print("text", color): Invokes BIOS int 10h to render text. The color parameter accepts a u8 attribute (e.g., 14 for Yellow, 10 for Green).
+ * newline(): Moves the hardware cursor to the beginning of the next line.
 
-2. Manual Sector Padding and Alignment
-BIOS reads disk data in fixed 512-byte sectors. If the compiled kernel does not perfectly fill a sector, it must be padded with null bytes to prevent hardware errors or undefined behavior.
-Calculation Logic:
- * Compile the kernel to get kernel.bin. [ type in CMD with admin access insdie kernel.br directory 'bedrockco.exe kernel.br --format bin' ]
- * Determine the size of kernel.bin in bytes (represented as X).
- * Calculate the required padding: 512 - X = Padding Size.
-Creating the Padding File (Windows CMD):
-Use the fsutil tool to generate a file containing only null bytes:
-[fsutil file createnew padding.bin [Padding Size] ]
 
-Build and Execution Workflow
-Follow these steps to build and boot the BedRock OS:
-Step 1: Compile the Source Code
-Translate your .br file into a raw binary using the BedRock compiler:
+
+Memory Management (Pointers)
+BedRock treats memory as a raw array of bytes. Using the * operator, you can perform Direct Memory Access (DMA):
+
+
+    * // Writing '!' (ASCII 33) in Light Red (Color 12) directly to VGA memory
+    fn apply_visual_fix() -> void {
+     let char_ptr: *u8 = 0xB8000;
+     let color_ptr: *u8 = 0xB8001; 
+     char_ptr = 33;  // The '!' symbol
+     color_ptr = 12; // The Light Red attribute
+    }
+  
+
+Build & Deployment
+1. Compile to Raw Binary
 bedrockco.exe kernel.br --format bin
 
-Step 2: Prepare the Bootloader
-Assemble the bootsector using NASM:
-nasm -f bin boot.asm -o boot.bin
+2. Generate Padding
+Ensures the kernel fits perfectly into disk sectors:
+fsutil file createnew padding.bin (kernel.bin file size - 512)
 
-Step 3: Align and Stitch the Image
-Merge the components into a single bootable disk image (.img) using the binary copy command:
-copy /b boot.bin + kernel.bin + padding.bin kernel.img
+3. Create Disk Image
+Concatenate the Bootloader, Kernel, and Padding:
+copy /b boot.bin + kernel.bin + padding.bin BedRockOS.img
 
-Step 4: Emulation
-Run the final image in QEMU to verify the execution:
-qemu-system-i386 -drive format=raw,file=kernel.img
-
-Compiler Architecture
-The BedRock compiler is built with three main modules:
- * Lexical Analyzer (Lexer): Converts source text into tokens.
- * Syntax Analyzer (Parser): Constructs an Abstract Syntax Tree (AST) based on language grammar.
- * Code Generator (CodeGen): Produces x86 machine code and manages memory offsets for local and global symbols.
+4. Boot in Emulator
