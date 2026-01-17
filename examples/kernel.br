@@ -1,15 +1,14 @@
-fn kernel_main() -> void {
-    clear();
-    
-    print("BedRock OS Technical Update", 14);
-    newline();
+include "realtek_roots.br";
 
-    let vga: *u16 = 0xB8000;
-    *vga = 0x2104; 
+fn main() {
 
-    print("Direct Memory Access: SUCCESS", 10);
-    
+    outb(0xEE000001, 1); 
+
+
+    outb(UART_BASE, 0x42); 
+    outb(UART_BASE, 0x52); 
+
     loop {
-        asm("hlt");
+
     }
 }

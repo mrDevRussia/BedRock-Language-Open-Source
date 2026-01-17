@@ -1,206 +1,169 @@
 use crate::lexer::Token;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Type { U8, U16, U32, U64, Void, Pointer(Box<Type>) }
-
-#[derive(Debug)]
-pub struct Program { pub globals: Vec<Global>, pub functions: Vec<Function> }
-
-#[derive(Debug)]
-pub struct Global { pub name: String, pub ty: Type, pub volatile: bool, pub attributes: Vec<Attribute> }
-
-#[derive(Debug)]
-pub struct Function { pub name: String, pub ret_type: Type, pub body: Vec<Statement>, pub attributes: Vec<Attribute> }
-
-#[derive(Debug, Clone)]
-pub enum Attribute { Address(u64), Interrupt }
-
-#[derive(Debug)]
-pub enum Statement {
-    Let { name: String, ty: Type, value: Option<Expression>, volatile: bool },
-    Expression(Expression),
-    Loop(Vec<Statement>),
-    Asm(String),
-    Assignment(Box<Expression>, Box<Expression>),
-    Clear,
-    Newline,
-    Print(String, u8),
-}
-
-#[derive(Debug)]
-pub enum Expression {
-    Number(u64), Variable(String),
-    BinaryOp(Box<Expression>, Op, Box<Expression>),
-    Dereference(Box<Expression>),
-}
-
-#[derive(Debug, Clone)]
-pub enum Op { Add, Sub, Or, And }
+use crate::ast::{Statement, Expression};
 
 pub struct Parser { tokens: Vec<Token>, pos: usize }
-
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self { Parser { tokens, pos: 0 } }
-
-    pub fn parse_program(&mut self) -> Program {
-        let mut globals = Vec::new();
-        let mut functions = Vec::new();
-        while !self.is_at_end() {
-            let attrs = self.parse_attributes();
-            if self.check(Token::Fn) { functions.push(self.parse_function(attrs)); }
-            else if self.check(Token::Let) || self.check(Token::Volatile) { globals.push(self.parse_global(attrs)); }
-            else { self.advance(); }
-        }
-        Program { globals, functions }
-    }
-
-    fn parse_attributes(&mut self) -> Vec<Attribute> {
-        let mut attrs = Vec::new();
-        while self.match_token(Token::Hash) {
-            self.expect(Token::LBracket);
-            match self.advance() {
-                Token::Identifier(ref s) if s == "address" => {
-                    self.expect(Token::LParen);
-                    let addr = match self.advance() { Token::Number(n) => n, _ => panic!("Addr expected") };
-                    self.expect(Token::RParen);
-                    attrs.push(Attribute::Address(addr));
-                }
-                Token::Identifier(ref s) if s == "interrupt" => attrs.push(Attribute::Interrupt),
-                _ => panic!("Unknown attribute"),
-            }
-            self.expect(Token::RBracket);
-        }
-        attrs
-    }
-
-    fn parse_function(&mut self, attributes: Vec<Attribute>) -> Function {
-        self.expect(Token::Fn);
-        let name = match self.advance() { Token::Identifier(s) => s, _ => panic!("Fn name expected") };
-        self.expect(Token::LParen);
-        while !self.check(Token::RParen) && !self.is_at_end() { 
-            self.advance(); 
-            if self.match_token(Token::Comma) { continue; } 
-        }
-        self.expect(Token::RParen);
-        self.expect(Token::Arrow);
-        let ret_type = self.parse_type();
-        self.expect(Token::LBrace);
-        Function { name, ret_type, body: self.parse_block(), attributes }
-    }
-
-    fn parse_global(&mut self, attributes: Vec<Attribute>) -> Global {
-        let volatile = self.match_token(Token::Volatile);
-        self.expect(Token::Let);
-        let name = match self.advance() { Token::Identifier(s) => s, _ => panic!("Global name") };
-        self.expect(Token::Colon);
-        let ty = self.parse_type();
-        self.expect(Token::SemiColon);
-        Global { name, ty, volatile, attributes }
-    }
-
-    fn parse_block(&mut self) -> Vec<Statement> {
+    pub fn parse_program(&mut self) -> Vec<Statement> {
         let mut stmts = Vec::new();
-        while !self.check(Token::RBrace) && !self.is_at_end() { stmts.push(self.parse_statement()); }
-        self.expect(Token::RBrace);
+        while !self.is_at_end() { stmts.push(self.parse_statement()); }
         stmts
     }
-
     fn parse_statement(&mut self) -> Statement {
-        if self.match_token(Token::Let) {
-            let name = match self.advance() { Token::Identifier(s) => s, _ => panic!("Var name") };
-            self.expect(Token::Colon);
-            let ty = self.parse_type();
-            self.expect(Token::Equal);
-            let val = self.parse_expression();
-            self.expect(Token::SemiColon);
-            Statement::Let { name, ty, value: Some(val), volatile: false }
-        } else if self.check(Token::Identifier("clear".to_string())) {
-            self.advance(); self.expect(Token::LParen); self.expect(Token::RParen); self.expect(Token::SemiColon);
-            Statement::Clear
-        } else if self.check(Token::Identifier("newline".to_string())) {
-            self.advance(); self.expect(Token::LParen); self.expect(Token::RParen); self.expect(Token::SemiColon);
-            Statement::Newline
-        } else if self.check(Token::Identifier("print".to_string())) {
-            self.advance(); self.expect(Token::LParen);
-            let s = match self.advance() { Token::StringLiteral(s) => s, _ => panic!("Print string expected") };
-            let col = if self.match_token(Token::Comma) {
-                match self.advance() { Token::Number(n) => n as u8, _ => 0x07 }
-            } else { 0x07 };
-            self.expect(Token::RParen); self.expect(Token::SemiColon);
-            Statement::Print(s, col)
-        } else if self.match_token(Token::Loop) {
-            self.expect(Token::LBrace); Statement::Loop(self.parse_block())
-        } else if self.match_token(Token::Asm) {
-            self.expect(Token::LParen);
-            let code = match self.advance() { Token::StringLiteral(s) => s, _ => panic!("Asm string") };
-            self.expect(Token::RParen); self.expect(Token::SemiColon);
-            Statement::Asm(code)
-        } else {
-            let expr = self.parse_expression();
-            if self.match_token(Token::Equal) {
-                let rhs = self.parse_expression(); self.expect(Token::SemiColon);
-                Statement::Assignment(Box::new(expr), Box::new(rhs))
-            } else { self.expect(Token::SemiColon); Statement::Expression(expr) }
+        if self.match_token(Token::Fn) { return self.function_define(); }
+        if self.match_token(Token::Let) { return self.let_statement(); }
+        if self.match_token(Token::Root) { return self.root_statement(); }
+        if self.match_token(Token::Loop) { return self.loop_statement(); }
+        if self.match_token(Token::While) { return self.while_statement(); }
+        if self.match_token(Token::If) { return self.if_statement(); }
+        if self.match_token(Token::Break) { self.consume(Token::SemiColon); return Statement::Break; }
+        if self.match_token(Token::Return) { self.consume(Token::SemiColon); return Statement::Return; }
+        if self.match_token(Token::Outb) { return self.outb_stmt(); }
+        if self.match_token(Token::Poke) { return self.poke_stmt(); }
+        if self.match_token(Token::Asm) { return self.asm_stmt(); }
+        let token = self.advance();
+        if let Token::Identifier(id) = token {
+            if self.match_token(Token::LParen) { return self.call_stmt(id); }
+            if self.match_token(Token::Equal) { return self.assign_stmt(id); }
         }
+        panic!("Error at {}", self.pos);
     }
-
+    fn outb_stmt(&mut self) -> Statement {
+        self.consume(Token::LParen);
+        let port = self.parse_expression(); self.consume(Token::Comma);
+        let val = self.parse_expression(); self.consume(Token::RParen);
+        self.consume(Token::SemiColon);
+        Statement::Outb(port, val)
+    }
+    fn poke_stmt(&mut self) -> Statement {
+        self.consume(Token::LParen);
+        let addr = self.parse_expression(); self.consume(Token::Comma);
+        let val = self.parse_expression(); self.consume(Token::RParen);
+        self.consume(Token::SemiColon);
+        Statement::Poke(addr, val)
+    }
+    fn function_define(&mut self) -> Statement {
+        let name = if let Token::Identifier(s) = self.advance() { s } else { panic!() };
+        self.consume(Token::LParen);
+        let mut params = Vec::new();
+        if !self.check(Token::RParen) {
+            loop {
+                if let Token::Identifier(p) = self.advance() { params.push(p); }
+                if !self.match_token(Token::Comma) { break; }
+            }
+        }
+        self.consume(Token::RParen); self.consume(Token::LBrace);
+        let mut body = Vec::new();
+        while !self.check(Token::RBrace) && !self.is_at_end() { body.push(self.parse_statement()); }
+        self.consume(Token::RBrace);
+        Statement::FunctionDefine(name, params, body)
+    }
     fn parse_expression(&mut self) -> Expression {
-        self.parse_additive()
-    }
-
-    fn parse_additive(&mut self) -> Expression {
-        let mut left = self.parse_bitwise();
-        while self.check(Token::Plus) || self.check(Token::Minus) {
-            let op = if self.match_token(Token::Plus) { Op::Add } else { self.advance(); Op::Sub };
-            left = Expression::BinaryOp(Box::new(left), op, Box::new(self.parse_bitwise()));
+        let mut expr = self.primary();
+        while self.match_any(&["+", "-", "*", "/", "==", ">", "<"]) {
+            let op = self.previous_op();
+            let right = self.primary();
+            expr = Expression::BinaryOp(Box::new(expr), op, Box::new(right));
         }
-        left
+        expr
     }
-
-    fn parse_bitwise(&mut self) -> Expression {
-        let mut left = self.parse_unary();
-        while self.match_token(Token::Pipe) {
-            left = Expression::BinaryOp(Box::new(left), Op::Or, Box::new(self.parse_unary()));
+    fn primary(&mut self) -> Expression {
+        match self.peek() {
+            Token::Number(n) => { self.advance(); Expression::Number(n) }
+            Token::Identifier(s) if s == "in" => { self.advance(); Expression::WaitKey }
+            Token::Identifier(s) => { self.advance(); Expression::Variable(s) }
+            Token::Peek => { self.advance(); self.consume(Token::LParen); let addr = self.parse_expression(); self.consume(Token::RParen); Expression::Peek(Box::new(addr)) }
+            _ => panic!()
         }
-        left
     }
-
-    fn parse_unary(&mut self) -> Expression {
-        if self.match_token(Token::Star) { Expression::Dereference(Box::new(self.parse_unary())) }
-        else { self.parse_primary() }
+    fn let_statement(&mut self) -> Statement {
+        let n = if let Token::Identifier(s) = self.advance() { s } else { panic!() };
+        self.consume(Token::Equal);
+        let v = self.parse_expression(); self.consume(Token::SemiColon);
+        Statement::Let(n, v)
     }
-
-    fn parse_primary(&mut self) -> Expression {
-        if self.match_token(Token::LParen) {
-            let expr = self.parse_expression();
-            self.expect(Token::RParen);
-            expr
+    fn root_statement(&mut self) -> Statement {
+        let n = if let Token::Identifier(s) = self.advance() { s } else { panic!() };
+        self.consume(Token::Equal);
+        let v = self.parse_expression(); self.consume(Token::SemiColon);
+        Statement::Root(n, v)
+    }
+    fn loop_statement(&mut self) -> Statement {
+        self.consume(Token::LBrace);
+        let mut b = Vec::new();
+        while !self.check(Token::RBrace) { b.push(self.parse_statement()); }
+        self.consume(Token::RBrace);
+        Statement::Loop(b)
+    }
+    fn while_statement(&mut self) -> Statement {
+        let cond = self.parse_expression(); self.consume(Token::LBrace);
+        let mut body = Vec::new();
+        while !self.check(Token::RBrace) { body.push(self.parse_statement()); }
+        self.consume(Token::RBrace);
+        Statement::While(cond, body)
+    }
+    fn if_statement(&mut self) -> Statement {
+        let c = self.parse_expression(); self.consume(Token::LBrace);
+        let mut then_body = Vec::new();
+        while !self.check(Token::RBrace) { then_body.push(self.parse_statement()); }
+        self.consume(Token::RBrace);
+        let else_body = if self.match_token(Token::Else) {
+            self.consume(Token::LBrace);
+            let mut e = Vec::new();
+            while !self.check(Token::RBrace) { e.push(self.parse_statement()); }
+            self.consume(Token::RBrace);
+            Some(e)
         } else {
-            match self.advance() {
-                Token::Number(n) => Expression::Number(n),
-                Token::Identifier(s) => Expression::Variable(s),
-                _ => panic!("Expression error at {:?}", self.peek()),
-            }
-        }
+            None
+        };
+        Statement::If(c, then_body, else_body)
     }
-
-    fn parse_type(&mut self) -> Type {
-        if self.match_token(Token::Star) { Type::Pointer(Box::new(self.parse_type())) }
-        else {
-            match self.advance() {
-                Token::Identifier(s) => match s.as_str() {
-                    "u8" => Type::U8, "u16" => Type::U16, "u32" => Type::U32, "void" => Type::Void,
-                    _ => panic!("Unknown type: {}", s),
-                },
-                _ => panic!("Type expected"),
-            }
+    fn call_stmt(&mut self, name: String) -> Statement {
+        let mut args = Vec::new();
+        if !self.check(Token::RParen) {
+            loop { args.push(self.parse_expression()); if !self.match_token(Token::Comma) { break; } }
         }
+        self.consume(Token::RParen); self.consume(Token::SemiColon);
+        Statement::Call(name, args)
     }
-
-    fn peek(&self) -> Token { self.tokens.get(self.pos).cloned().unwrap_or(Token::EOF) }
-    fn check(&self, t: Token) -> bool { self.peek() == t }
-    fn is_at_end(&self) -> bool { self.peek() == Token::EOF }
-    fn advance(&mut self) -> Token { let t = self.peek(); if !self.is_at_end() { self.pos += 1; } t }
+    fn assign_stmt(&mut self, name: String) -> Statement {
+        let v = self.parse_expression(); self.consume(Token::SemiColon);
+        Statement::Assignment(name, v)
+    }
+    fn asm_stmt(&mut self) -> Statement {
+        self.consume(Token::LParen);
+        let c = if let Token::StringLiteral(s) = self.advance() { s } else { panic!() };
+        self.consume(Token::RParen); self.consume(Token::SemiColon);
+        Statement::Asm(c)
+    }
     fn match_token(&mut self, t: Token) -> bool { if self.check(t) { self.advance(); true } else { false } }
-    fn expect(&mut self, t: Token) { if !self.match_token(t.clone()) { panic!("Expected {:?} got {:?}", t, self.peek()); } }
+    fn check(&self, t: Token) -> bool { self.peek() == t }
+    fn peek(&self) -> Token { self.tokens.get(self.pos).cloned().unwrap_or(Token::EOF) }
+    fn advance(&mut self) -> Token { if !self.is_at_end() { self.pos += 1; } self.tokens[self.pos-1].clone() }
+    fn is_at_end(&self) -> bool { self.peek() == Token::EOF }
+    fn match_any(&mut self, ops: &[&str]) -> bool {
+        let c = self.peek();
+        for op in ops {
+            match *op {
+                "+" if c == Token::Plus => { self.advance(); return true; }
+                "-" if c == Token::Minus => { self.advance(); return true; }
+                "*" if c == Token::Star => { self.advance(); return true; }
+                "/" if c == Token::Slash => { self.advance(); return true; }
+                "==" if c == Token::EqEq => { self.advance(); return true; }
+                ">" if c == Token::Greater => { self.advance(); return true; }
+                "<" if c == Token::Less => { self.advance(); return true; }
+                _ => {}
+            }
+        }
+        false
+    }
+    fn previous_op(&self) -> String {
+        match self.tokens.get(self.pos-1) {
+            Some(Token::Plus) => "+".into(), Some(Token::Minus) => "-".into(),
+            Some(Token::Star) => "*".into(), Some(Token::Slash) => "/".into(),
+            Some(Token::EqEq) => "==".into(), Some(Token::Greater) => ">".into(),
+            Some(Token::Less) => "<".into(), _ => "".into()
+        }
+    }
+    fn consume(&mut self, t: Token) { if !self.match_token(t) { panic!(); } }
 }
