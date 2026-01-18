@@ -2,8 +2,8 @@
 pub enum Token {
     Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include,
     Identifier(String), Number(u64), StringLiteral(String),
-    LParen, RParen, LBrace, RBrace, Colon, SemiColon, Comma, Equal,
-    Plus, Minus, Star, Slash, EqEq, Greater, Less, EOF
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Colon, SemiColon, Comma, Equal,
+    Plus, Minus, Star, Slash, EqEq, Greater, Less, Ampersand, Pipe, EOF
 }
 
 pub struct Lexer { input: Vec<char>, pos: usize }
@@ -14,21 +14,22 @@ impl Lexer {
         if self.pos >= self.input.len() { return Token::EOF; }
         let ch = self.input[self.pos];
         if ch.is_alphabetic() || ch == '_' { return self.read_identifier(); }
-        // تعديل بسيط هنا للتأكد من قراءة الأرقام بشكل صحيح
-        if ch.is_digit(10) {
-            return self.read_number();
-        }
+        if ch.is_digit(10) { return self.read_number(); }
         match ch {
             '(' => { self.pos += 1; Token::LParen }
             ')' => { self.pos += 1; Token::RParen }
             '{' => { self.pos += 1; Token::LBrace }
             '}' => { self.pos += 1; Token::RBrace }
+            '[' => { self.pos += 1; Token::LBracket }
+            ']' => { self.pos += 1; Token::RBracket }
             ';' => { self.pos += 1; Token::SemiColon }
             ',' => { self.pos += 1; Token::Comma }
             '+' => { self.pos += 1; Token::Plus }
             '-' => { self.pos += 1; Token::Minus }
             '*' => { self.pos += 1; Token::Star }
             '/' => { self.pos += 1; Token::Slash }
+            '&' => { self.pos += 1; Token::Ampersand }
+            '|' => { self.pos += 1; Token::Pipe }
             '=' => {
                 self.pos += 1;
                 if self.pos < self.input.len() && self.input[self.pos] == '=' { self.pos += 1; Token::EqEq }
@@ -52,34 +53,22 @@ impl Lexer {
             "poke" => Token::Poke, "peek" => Token::Peek, "include" => Token::Include, _ => Token::Identifier(s)
         }
     }
-    
-    // هذا هو الجزء الذي تم إصلاحه جذرياً
     fn read_number(&mut self) -> Token {
         let mut base = 10;
-        let mut start = self.pos; // بداية الرقم الافتراضية
-
-        // فحص وجود 0x
+        let mut start = self.pos;
         if self.input[self.pos] == '0' && self.pos + 1 < self.input.len() {
             let next = self.input[self.pos + 1].to_ascii_lowercase();
-            if next == 'x' { 
-                base = 16; 
-                self.pos += 2; // تخطي الـ 0 والـ x
-                start = self.pos; // نبدأ النسخ من بعد الـ x مباشرة
-            }
+            if next == 'x' { base = 16; self.pos += 2; start = self.pos; }
         }
-
         while self.pos < self.input.len() {
             let ch = self.input[self.pos].to_ascii_lowercase();
             if (base == 10 && !ch.is_digit(10)) || (base == 16 && !ch.is_digit(16)) { break; }
             self.pos += 1;
         }
-
         let s: String = self.input[start..self.pos].iter().collect();
-        // الآن النص s يحتوي فقط على الأرقام بدون 0x
         let value = u64::from_str_radix(&s, base).unwrap_or(0);
         Token::Number(value)
     }
-
     fn read_string(&mut self) -> Token {
         self.pos += 1; let start = self.pos;
         while self.pos < self.input.len() && self.input[self.pos] != '"' { self.pos += 1; }

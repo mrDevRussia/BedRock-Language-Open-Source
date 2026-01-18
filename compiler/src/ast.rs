@@ -12,7 +12,9 @@ pub enum Statement {
     Asm(String),
     Outb(Expression, Expression),
     Poke(Expression, Expression),
-    Break
+    Break,
+    ArrayDefine(String, Vec<u64>),
+    StringDefine(String, String)
 }
 
 #[derive(Debug, Clone)]
@@ -22,5 +24,6 @@ pub enum Expression {
     BinaryOp(Box<Expression>, String, Box<Expression>),
     WaitKey,
     Inb(Box<Expression>),
-    Peek(Box<Expression>)
+    Peek(Box<Expression>),
+    ArrayAccess(String, Box<Expression>)
 }

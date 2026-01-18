@@ -11,7 +11,7 @@ impl Parser {
     }
     fn parse_statement(&mut self) -> Statement {
         if self.match_token(Token::Fn) { return self.function_define(); }
-        if self.match_token(Token::Let) { return self.let_statement(); }
+        if self.match_token(Token::Let) { return self.let_or_array_or_string(); }
         if self.match_token(Token::Root) { return self.root_statement(); }
         if self.match_token(Token::Loop) { return self.loop_statement(); }
         if self.match_token(Token::While) { return self.while_statement(); }
@@ -26,7 +26,26 @@ impl Parser {
             if self.match_token(Token::LParen) { return self.call_stmt(id); }
             if self.match_token(Token::Equal) { return self.assign_stmt(id); }
         }
-        panic!("Error at {}", self.pos);
+        panic!("Error at pos {}", self.pos);
+    }
+    fn let_or_array_or_string(&mut self) -> Statement {
+        let n = if let Token::Identifier(s) = self.advance() { s } else { panic!() };
+        self.consume(Token::Equal);
+        if self.match_token(Token::LBracket) {
+            let mut vals = Vec::new();
+            while !self.check(Token::RBracket) {
+                if let Token::Number(num) = self.advance() { vals.push(num); }
+                if !self.match_token(Token::Comma) { break; }
+            }
+            self.consume(Token::RBracket); self.consume(Token::SemiColon);
+            return Statement::ArrayDefine(n, vals);
+        }
+        if let Token::StringLiteral(s) = self.peek() {
+            self.advance(); self.consume(Token::SemiColon);
+            return Statement::StringDefine(n, s);
+        }
+        let v = self.parse_expression(); self.consume(Token::SemiColon);
+        Statement::Let(n, v)
     }
     fn outb_stmt(&mut self) -> Statement {
         self.consume(Token::LParen);
@@ -60,7 +79,7 @@ impl Parser {
     }
     fn parse_expression(&mut self) -> Expression {
         let mut expr = self.primary();
-        while self.match_any(&["+", "-", "*", "/", "==", ">", "<"]) {
+        while self.match_any(&["+", "-", "*", "/", "==", ">", "<", "&", "|"]) {
             let op = self.previous_op();
             let right = self.primary();
             expr = Expression::BinaryOp(Box::new(expr), op, Box::new(right));
@@ -71,16 +90,17 @@ impl Parser {
         match self.peek() {
             Token::Number(n) => { self.advance(); Expression::Number(n) }
             Token::Identifier(s) if s == "in" => { self.advance(); Expression::WaitKey }
-            Token::Identifier(s) => { self.advance(); Expression::Variable(s) }
+            Token::Identifier(s) => { 
+                self.advance(); 
+                if self.match_token(Token::LBracket) {
+                    let idx = self.parse_expression(); self.consume(Token::RBracket);
+                    return Expression::ArrayAccess(s, Box::new(idx));
+                }
+                Expression::Variable(s) 
+            }
             Token::Peek => { self.advance(); self.consume(Token::LParen); let addr = self.parse_expression(); self.consume(Token::RParen); Expression::Peek(Box::new(addr)) }
-            _ => panic!()
+            _ => panic!("Expr Error")
         }
-    }
-    fn let_statement(&mut self) -> Statement {
-        let n = if let Token::Identifier(s) = self.advance() { s } else { panic!() };
-        self.consume(Token::Equal);
-        let v = self.parse_expression(); self.consume(Token::SemiColon);
-        Statement::Let(n, v)
     }
     fn root_statement(&mut self) -> Statement {
         let n = if let Token::Identifier(s) = self.advance() { s } else { panic!() };
@@ -113,9 +133,7 @@ impl Parser {
             while !self.check(Token::RBrace) { e.push(self.parse_statement()); }
             self.consume(Token::RBrace);
             Some(e)
-        } else {
-            None
-        };
+        } else { None };
         Statement::If(c, then_body, else_body)
     }
     fn call_stmt(&mut self, name: String) -> Statement {
@@ -152,6 +170,8 @@ impl Parser {
                 "==" if c == Token::EqEq => { self.advance(); return true; }
                 ">" if c == Token::Greater => { self.advance(); return true; }
                 "<" if c == Token::Less => { self.advance(); return true; }
+                "&" if c == Token::Ampersand => { self.advance(); return true; }
+                "|" if c == Token::Pipe => { self.advance(); return true; }
                 _ => {}
             }
         }
@@ -162,8 +182,9 @@ impl Parser {
             Some(Token::Plus) => "+".into(), Some(Token::Minus) => "-".into(),
             Some(Token::Star) => "*".into(), Some(Token::Slash) => "/".into(),
             Some(Token::EqEq) => "==".into(), Some(Token::Greater) => ">".into(),
-            Some(Token::Less) => "<".into(), _ => "".into()
+            Some(Token::Less) => "<".into(), Some(Token::Ampersand) => "&".into(),
+            Some(Token::Pipe) => "|".into(), _ => "".into()
         }
     }
-    fn consume(&mut self, t: Token) { if !self.match_token(t) { panic!(); } }
+    fn consume(&mut self, t: Token) { if !self.match_token(t.clone()) { panic!("Expected {:?}", t); } }
 }
