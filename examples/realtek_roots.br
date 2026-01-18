@@ -1,6 +1,0 @@
-
-root UART_BASE = 0xB80003F8; 
-root UART_LSR  = 0xB80003FD; 
-
-
-root LSR_THRE  = 0x20;       
