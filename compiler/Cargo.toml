@@ -1,0 +1,14 @@
+[package]
+name = "bedrockco"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bedrockco"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+
+[build-dependencies]
+embed-resource = "2.4"
