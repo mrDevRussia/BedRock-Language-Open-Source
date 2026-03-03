@@ -11,4 +11,5 @@ path = "src/main.rs"
 anyhow = "1.0"
 
 [build-dependencies]
-embed-resource = "2.4"
+winres = "0.1"
+# يمكنك إبقاء أو حذف embed-resource، لكن winres تكفي للأيقونة

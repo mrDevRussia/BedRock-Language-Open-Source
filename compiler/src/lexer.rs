@@ -3,7 +3,7 @@ pub enum Token {
     Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include,
     Identifier(String), Number(u64), StringLiteral(String),
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Colon, SemiColon, Comma, Equal,
-    Plus, Minus, Star, Slash, EqEq, Greater, Less, Ampersand, Pipe, EOF
+    Plus, Minus, Star, Slash, EqEq, Greater, Less, Ampersand, Pipe, EOF, Caret, NotEq, GreaterEq, LessEq
 }
 
 pub struct Lexer { 
@@ -43,6 +43,7 @@ impl Lexer {
             ',' => { self.advance_char(); Token::Comma }
             '+' => { self.advance_char(); Token::Plus }
             '-' => { self.advance_char(); Token::Minus }
+            '^' => { self.advance_char(); Token::Caret }
             '*' => { self.advance_char(); Token::Star }
             '&' => { self.advance_char(); Token::Ampersand }
             '|' => { self.advance_char(); Token::Pipe }
@@ -60,27 +61,46 @@ impl Lexer {
             '=' => {
                 self.advance_char();
                 if self.pos < self.input.len() && self.input[self.pos] == '=' { 
-                    self.advance_char(); 
-                    Token::EqEq 
+                    self.advance_char(); Token::EqEq 
+                } else { Token::Equal }
+            }
+            '!' => {
+                self.advance_char();
+                if self.pos < self.input.len() && self.input[self.pos] == '=' {
+                    self.advance_char(); Token::NotEq
                 } else { 
-                    Token::Equal 
+                    eprintln!("[LEXER ERROR] Expected '=' after '!' at line {}, col {}", self.line, self.col);
+                    Token::EOF 
                 }
             }
-            '>' => { self.advance_char(); Token::Greater }
-            '<' => { self.advance_char(); Token::Less }
-            '"' => {
-                self.advance_char();  // Skip the opening quote
-                let result = self.read_string();
-                result
-            }
-            _ => {
-                eprintln!("[LEXER ERROR] Unexpected character '{}' (ASCII: {}) at line {}, column {}", 
-                    ch, ch as u32, self.line, self.col);
+            '>' => {
                 self.advance_char();
-                Token::EOF
+                if self.pos < self.input.len() && self.input[self.pos] == '=' {
+                    self.advance_char(); Token::GreaterEq
+                } else { Token::Greater }
             }
-        }
-    }
+            '<' => {
+                self.advance_char();
+                if self.pos < self.input.len() && self.input[self.pos] == '=' {
+                    self.advance_char(); Token::LessEq
+                } else { Token::Less }
+            }
+            '"' => {
+                self.advance_char(); 
+                self.read_string()
+            }
+
+            _ => {
+                if ch.is_whitespace() {
+                    self.advance_char();
+                    return self.next_token();
+                }
+                eprintln!("[LEXER ERROR] Unknown character '{}' at line {}, col {}", ch, self.line, self.col);
+                self.advance_char();
+                self.next_token()
+            }
+        } 
+    } 
     
     fn advance_char(&mut self) {
         if self.pos < self.input.len() {
