@@ -2,7 +2,8 @@
 pub enum Token {
     Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include,
     Identifier(String), Number(u64), StringLiteral(String),
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Colon, SemiColon, Comma, Equal,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Colon, SemiColon, Comma, Equal,ShiftLeft,  // لتمثيل <<
+    ShiftRight,
     Plus, Minus, Star, Slash, EqEq, Greater, Less, Ampersand, Pipe, EOF, Caret, NotEq, GreaterEq, LessEq
 }
 
@@ -74,17 +75,21 @@ impl Lexer {
                 }
             }
             '>' => {
-                self.advance_char();
-                if self.pos < self.input.len() && self.input[self.pos] == '=' {
-                    self.advance_char(); Token::GreaterEq
-                } else { Token::Greater }
-            }
+    self.advance_char();
+    if self.pos < self.input.len() && self.input[self.pos] == '=' {
+        self.advance_char(); Token::GreaterEq
+    } else if self.pos < self.input.len() && self.input[self.pos] == '>' {
+        self.advance_char(); Token::ShiftRight // أضف هذا السطر
+    } else { Token::Greater }
+}
             '<' => {
-                self.advance_char();
-                if self.pos < self.input.len() && self.input[self.pos] == '=' {
-                    self.advance_char(); Token::LessEq
-                } else { Token::Less }
-            }
+    self.advance_char();
+    if self.pos < self.input.len() && self.input[self.pos] == '=' {
+        self.advance_char(); Token::LessEq
+    } else if self.pos < self.input.len() && self.input[self.pos] == '<' {
+        self.advance_char(); Token::ShiftLeft // أضف هذا السطر
+    } else { Token::Less }
+}
             '"' => {
                 self.advance_char(); 
                 self.read_string()

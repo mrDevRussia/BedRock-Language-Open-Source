@@ -26,5 +26,6 @@ pub enum Expression {
     WaitKey,
     Inb(Box<Expression>),
     Peek(Box<Expression>),
+    Call(String, Vec<Expression>),
     ArrayAccess(String, Box<Expression>)
 }

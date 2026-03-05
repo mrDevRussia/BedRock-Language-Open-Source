@@ -401,6 +401,20 @@ impl Codegen {
                         self.emit(0x00000018 | (left_reg << 21) | (right_reg << 16)); // mult
                         self.emit(0x00000012 | (dest_reg << 11)); // mflo
                     }
+
+
+"<<" => {
+    // SLLV: $dest = $left << $right
+    // Opcode: 0x00000004 | rs (right) | rt (left) | rd (dest) | func (0x04)
+    self.emit(0x00000004 | (right_reg << 21) | (left_reg << 16) | (dest_reg << 11));
+}
+">>" => {
+    // SRLV: $dest = $left >> $right
+    // Opcode: 0x00000006 | rs (right) | rt (left) | rd (dest) | func (0x06)
+    self.emit(0x00000006 | (right_reg << 21) | (left_reg << 16) | (dest_reg << 11));
+}
+
+
                     "^" => {
                         self.emit(0x00000026 | (left_reg << 21) | (right_reg << 16) | (dest_reg << 11));
                      }
@@ -466,6 +480,47 @@ impl Codegen {
                 self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16));
                 self.free_reg(addr_reg);
             }
+
+Expression::Call(name, args) => {
+    // 1. حساب وتخزين معاملات الدالة (Arguments)
+    let mut arg_regs = Vec::new();
+    for arg in args {
+        let r = self.alloc_reg();
+        self.gen_expr(arg, r);
+        arg_regs.push(r);
+    }
+
+    // 2. إعداد الـ Stack لتمرير المعاملات (إذا وجدت)
+    if !args.is_empty() {
+        let space = (args.len() * 4) as u32;
+        let neg_space = (-(space as i32)) as u32;
+        self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (neg_space & 0xFFFF)); // addiu $sp, $sp, -space
+        
+        for (i, &reg) in arg_regs.iter().enumerate() {
+            self.emit(0xAC000000 | (29 << 21) | (reg << 16) | ((i * 4) as u32 & 0xFFFF)); // sw $reg, offset($sp)
+            self.free_reg(reg);
+        }
+    }
+
+    // 3. القفز إلى الدالة
+    if let Some(&idx) = self.functions.get(name) {
+        let target = self.get_jump_target(idx);
+        self.emit(0x0C000000 | target); // jal target
+        self.emit(0x00000000);          // nop (delay slot)
+    } else {
+        panic!("Function '{}' not defined before use!", name);
+    }
+
+    // 4. استرجاع قيمة العودة من مسجل $v0 (المسجل رقم 2) ووضعها في dest_reg
+    self.emit(0x00400021 | (0 << 21) | (2 << 16) | (dest_reg << 11)); // addu $dest, $0, $v0
+
+    // 5. تنظيف الـ Stack بعد العودة
+    if !args.is_empty() {
+        let space = (args.len() * 4) as u32;
+        self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (space & 0xFFFF)); // addiu $sp, $sp, space
+    }
+}
+
         }
     }
 
