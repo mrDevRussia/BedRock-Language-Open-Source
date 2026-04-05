@@ -62,11 +62,11 @@
         
     fn return_statement(&mut self) -> Statement {
             if self.match_token(Token::SemiColon) {
-                return Statement::Return(None); // أضف (None) هنا
+                return Statement::Return(None);
             }
             let expr = self.parse_expression();
             self.consume(Token::SemiColon);
-            Statement::Return(Some(expr)) // أضف Some(expr) هنا
+            Statement::Return(Some(expr))
         }
 
     fn parse_statement(&mut self) -> Statement {
@@ -85,10 +85,10 @@
         
         let token = self.advance();
         if let Token::Identifier(id) = token {
-            // 1. استدعاء دالة: func();
+            
             if self.match_token(Token::LParen) { return self.call_stmt(id); }
             
-            // 2. ✅ التعديل الجديد: تخصيص قيمة لعنصر في مصفوفة: arr[0] = 5;
+         
             if self.match_token(Token::LBracket) {
                 let idx = self.parse_expression();
                 self.consume(Token::RBracket);
@@ -98,7 +98,7 @@
                 return Statement::ArrayAssign(id, idx, val); 
             }
 
-            // 3. مساواة عادية: x = 10;
+    
             if self.match_token(Token::Equal) { return self.assign_stmt(id); }
             
             eprintln!("[PARSER ERROR] Invalid statement starting with identifier '{}'", id);
@@ -201,8 +201,7 @@
             self.consume(Token::RBrace);
             Statement::FunctionDefine(name, params, body)
         }
-        
-    // 1. التعبير يبدأ بالبحث عن العمليات المنطقية (أصغر، أكبر، يساوي)
+   
   fn parse_expression(&mut self) -> Expression {
     let mut expr = self.parse_term();
 
@@ -221,13 +220,13 @@
     }
     expr
 }
-    // 2. معالجة الجمع والطرح (أولوية متوسطة)
+ 
     fn parse_term(&mut self) -> Expression {
     let mut expr = self.parse_factor(); 
 
     while let Some(token) = self.peek_token() {
         match token {
-            // تأكد من وجود Pipe (|) و Caret (^) و Ampersand (&) هنا للعمليات المنطقية
+  
             Token::Plus | Token::Minus | Token::Pipe | Token::Caret | Token::Ampersand => {
                 let current_token = self.advance();
                 let op = self.token_to_string(current_token);
@@ -240,13 +239,13 @@
     expr
 }
 
-    // 3. معالجة الضرب والقسمة (أولوية عالية)
+
     fn parse_factor(&mut self) -> Expression {
     let mut expr = self.primary(); 
 
     while let Some(token) = self.peek_token() {
         match token {
-            // أضف ShiftLeft و ShiftRight هنا
+       
             Token::Star | Token::Slash | Token::ShiftLeft | Token::ShiftRight => {
                 let current_token = self.advance();
                 let op = self.token_to_string(current_token);
@@ -260,11 +259,11 @@
 }
         fn primary(&mut self) -> Expression {
         match self.peek() {
-            // ✅ الإضافة الجديدة: التعامل مع الأقواس
+   
             Token::LParen => {
                 self.advance(); // تخطي القوس (
-                let expr = self.parse_expression(); // قراءة ما بداخل القوس كـ Expression كامل
-                self.consume(Token::RParen); // التأكد من وجود قوس إغلاق )
+                let expr = self.parse_expression();
+                self.consume(Token::RParen);
                 expr
             }
             
@@ -277,7 +276,7 @@
         Token::Identifier(s) => {  
         self.advance();  
         
-        // التعديل السحري: هل هذا استدعاء دالة؟
+    
         if self.match_token(Token::LParen) {
             let mut args = Vec::new();
             if !self.check(Token::RParen) {
@@ -287,11 +286,11 @@
                 }
             }
             self.consume(Token::RParen);
-            // نحن نحتاج لإرجاع استدعاء دالة كتعبير
+           
             return Expression::Call(s, args); 
         }
 
-        // هل هو وصول لمصفوفة؟
+   
         if self.match_token(Token::LBracket) {
             let idx = self.parse_expression();  
             self.consume(Token::RBracket);
@@ -364,9 +363,9 @@
         }
         
     fn if_statement(&mut self) -> Statement {
-            self.consume(Token::LParen); // يجب استهلاك القوس ( أولاً
+            self.consume(Token::LParen);
             let c = self.parse_expression(); 
-            self.consume(Token::RParen); // يجب استهلاك القوس ) بعد الشرط
+            self.consume(Token::RParen);
             
             self.consume(Token::LBrace);
             let mut then_body = Vec::new();
@@ -412,7 +411,7 @@
         fn asm_stmt(&mut self) -> Statement {
             self.consume(Token::LParen);
             
-            // إصلاح: تحقق من StringLiteral بشكل صحيح
+          
             let token = self.advance();
             let c = if let Token::StringLiteral(s) = token {
                 s

@@ -79,7 +79,7 @@ impl Lexer {
     if self.pos < self.input.len() && self.input[self.pos] == '=' {
         self.advance_char(); Token::GreaterEq
     } else if self.pos < self.input.len() && self.input[self.pos] == '>' {
-        self.advance_char(); Token::ShiftRight // أضف هذا السطر
+        self.advance_char(); Token::ShiftRight 
     } else { Token::Greater }
 }
             '<' => {
@@ -87,7 +87,7 @@ impl Lexer {
     if self.pos < self.input.len() && self.input[self.pos] == '=' {
         self.advance_char(); Token::LessEq
     } else if self.pos < self.input.len() && self.input[self.pos] == '<' {
-        self.advance_char(); Token::ShiftLeft // أضف هذا السطر
+        self.advance_char(); Token::ShiftLeft 
     } else { Token::Less }
 }
             '"' => {
@@ -137,7 +137,7 @@ impl Lexer {
     }
     
     fn skip_block_comment(&mut self) {
-        self.advance_char(); // Skip '*'
+        self.advance_char();
         while self.pos + 1 < self.input.len() {
             if self.input[self.pos] == '*' && self.input[self.pos + 1] == '/' {
                 self.advance_char();
@@ -217,7 +217,7 @@ impl Lexer {
             return Token::EOF;
         }
         let s: String = self.input[start..self.pos].iter().collect();
-        self.advance_char(); // Skip the closing quote
+        self.advance_char(); 
         Token::StringLiteral(s)
     }
 }

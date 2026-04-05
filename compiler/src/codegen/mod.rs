@@ -39,7 +39,7 @@ struct LoopContext {
 impl Codegen {
     pub fn new() -> Self {
         let mut pool = VecDeque::new();
-        for i in 8..=15 { pool.push_back(i); } // استخدام المسجلات من $t0 إلى $t7
+        for i in 8..=15 { pool.push_back(i); }
         Codegen { 
             base_addr: BASE_ADDR,
             code: Vec::new(), 
@@ -65,14 +65,12 @@ impl Codegen {
         (absolute_addr >> 2) & 0x03FFFFFF
     }
 
-    // --- Phase 0: محرك التجميع الرئيسي ---
     pub fn compile(&mut self, stmts: &[Statement]) -> Vec<u8> {
     self.code.clear();
         self.symbols.clear();
         self.static_data.clear();
         self.root_symbols.clear();
         self.source_map.clear();
-        // 1. تجميع الـ Root Symbols (BASE, DATA, STACK)
         for s in stmts {
             if let Statement::Root(name, Expression::Number(val)) = s {
                 self.root_symbols.insert(name.clone(), *val as u32);
@@ -83,18 +81,13 @@ impl Codegen {
         self.next_addr = *self.root_symbols.get("DATA").unwrap_or(&(self.base_addr + 0x10000));
         let stack_ptr = *self.root_symbols.get("STACK").unwrap_or(&(self.base_addr + 0x20000));
             
-        // --- Bootloader: إعداد بيئة التشغيل ---
-        self.emit(0x00000000); // NOP
-        
-        // إعداد الـ Stack Pointer بناءً على الـ Root Symbol
-        self.emit_li(29, stack_ptr); // li $sp, STACK
+        self.emit(0x00000000); 
+        self.emit_li(29, stack_ptr); 
 
-        // قفزة لتخطي تعريفات الدوال للذهاب إلى الكود التنفيذي
         let global_jump_patch = self.code.len(); 
-        self.emit(0x08000000); // Jump placeholder
-        self.emit(0x00000000); // NOP delay slot
+        self.emit(0x08000000);
+        self.emit(0x00000000);
 
-        // 2. تخصيص الذاكرة للبيانات الثابتة (Arrays & Strings)
         for s in stmts {
             match s {
                 Statement::ArrayDefine(name, vals) => {
@@ -117,20 +110,16 @@ impl Codegen {
             }
         }
 
-        // 3. توليد كود الدوال (بعيداً عن التدفق الرئيسي)
         for s in stmts {
             if let Statement::FunctionDefine(_, _, _) = s {
                 self.generate_stmt(s);
             }
         }
 
-        // 4. ترقيع القفزة الأساسية لتبدأ من أول سطر كود تنفيذي
         let init_start_idx = self.code.len(); 
         let target = self.get_jump_target(init_start_idx); 
         self.code[global_jump_patch] = 0x08000000 | target;
 
-        // 5. تهيئة البيانات (Static Data Init)
-        // نقوم بتوليد تعليمات sw لكل قيمة في المصفوفات والنصوص
         let static_data_copy = self.static_data.clone();
         for (addr, bytes) in static_data_copy {
             let mut offset = 0;
@@ -150,7 +139,6 @@ impl Codegen {
             }
         }
 
-        // 6. توليد الكود العام (Global Code)
         for s in stmts {
             if !matches!(s, Statement::Root(_, _) | Statement::FunctionDefine(_, _, _) 
                | Statement::ArrayDefine(_, _) | Statement::StringDefine(_, _)) {
@@ -158,12 +146,10 @@ impl Codegen {
             }
         }
 
-        // 7. Halt (نهاية البرنامج)
         let halt_idx = self.code.len();
-        self.emit(0x08000000 | self.get_jump_target(halt_idx)); // Jump to self
+        self.emit(0x08000000 | self.get_jump_target(halt_idx)); 
         self.emit(0x00000000);
 
-        // 8. تحويل الكود إلى صيغة ثنائية (Big Endian)
         self.code.iter().flat_map(|&instr| instr.to_be_bytes().to_vec()).collect()
     }
 
@@ -179,33 +165,29 @@ impl Codegen {
                 self.local_offset = 0;
                 self.local_vars.clear();
 
-                // Prologue: إنشاء Stack Frame (32 bytes) وحفظ $ra
-                self.emit(0x27BDFFE0); // addiu $sp, $sp, -32
-                self.emit(0xAFBF001C); // sw $ra, 28($sp)
+                self.emit(0x27BDFFE0);
+                self.emit(0xAFBF001C);
 
                 self.current_params.clear();
                 for (i, p) in params.iter().enumerate() {
                     self.current_params.insert(p.clone(), 32 + (i * 4) as u32);
                 }
 
-               // نحتاج نعرف عنوان الـ epilogue قبل ما نولّد الـ body
-                // الحل: نحفظ placeholder ونعمل back-patch
                 let exit_patch_idx = self.code.len();
-                self.emit(0x08000000); // placeholder لـ jump للـ epilogue
-                self.emit(0x00000000); // nop
+                self.emit(0x08000000);
+                self.emit(0x00000000);
                 self.current_func_exit = Some(exit_patch_idx);
 
                 for s in body { self.generate_stmt(s); }
 
-                // دلوقتي نعرف عنوان الـ epilogue الحقيقي
                 let epilogue_idx = self.code.len();
-                // نعمل back-patch للـ placeholder jump
+           
                 self.code[exit_patch_idx] = 0x08000000 | self.get_jump_target(epilogue_idx);
 
-                self.emit(0x8FBF001C); // lw $ra, 28($sp)
-                self.emit(0x27BD0020); // addiu $sp, $sp, 32
-                self.emit(0x03E00008); // jr $ra
-                self.emit(0x00000000); // nop
+                self.emit(0x8FBF001C);
+                self.emit(0x27BD0020);
+                self.emit(0x03E00008);
+                self.emit(0x00000000);
 
                 self.in_function = false;
                 self.current_func_exit = None;
@@ -369,7 +351,7 @@ impl Codegen {
             }
 
             Statement::Outb(port_expr, val_expr) => {
-                // محاكاة Outb عبر الذاكرة (Memory-Mapped I/O)
+        
                 let port_reg = self.alloc_reg();
                 self.gen_expr(port_expr, port_reg);
                 let val_reg = self.alloc_reg();
@@ -440,13 +422,11 @@ impl Codegen {
 
 
 "<<" => {
-    // SLLV: $dest = $left << $right
-    // Opcode: 0x00000004 | rs (right) | rt (left) | rd (dest) | func (0x04)
+   
     self.emit(0x00000004 | (right_reg << 21) | (left_reg << 16) | (dest_reg << 11));
 }
 ">>" => {
-    // SRLV: $dest = $left >> $right
-    // Opcode: 0x00000006 | rs (right) | rt (left) | rd (dest) | func (0x06)
+   
     self.emit(0x00000006 | (right_reg << 21) | (left_reg << 16) | (dest_reg << 11));
 }
 
@@ -505,8 +485,8 @@ impl Codegen {
             }
 
             Expression::WaitKey => {
-                // محاكاة بسيطة: القراءة من عنوان ذاكرة متفق عليه للوحة المفاتيح
-                self.emit_li(dest_reg, 0x80020000); // عنوان افتراضي
+             
+                self.emit_li(dest_reg, 0x80020000);
                 self.emit(0x8C000000 | (dest_reg << 21) | (dest_reg << 16));
             }
 
@@ -518,7 +498,7 @@ impl Codegen {
             }
 
 Expression::Call(name, args) => {
-    // 1. حساب وتخزين معاملات الدالة (Arguments)
+   
     let mut arg_regs = Vec::new();
     for arg in args {
         let r = self.alloc_reg();
@@ -526,7 +506,6 @@ Expression::Call(name, args) => {
         arg_regs.push(r);
     }
 
-    // 2. إعداد الـ Stack لتمرير المعاملات (إذا وجدت)
     if !args.is_empty() {
         let space = (args.len() * 4) as u32;
         let neg_space = (-(space as i32)) as u32;
@@ -538,7 +517,6 @@ Expression::Call(name, args) => {
         }
     }
 
-    // 3. القفز إلى الدالة
     if let Some(&idx) = self.functions.get(name) {
         let target = self.get_jump_target(idx);
         self.emit(0x0C000000 | target); // jal target
@@ -547,10 +525,8 @@ Expression::Call(name, args) => {
         panic!("Function '{}' not defined before use!", name);
     }
 
-    // 4. استرجاع قيمة العودة من مسجل $v0 (المسجل رقم 2) ووضعها في dest_reg
     self.emit(0x00400021 | (0 << 21) | (2 << 16) | (dest_reg << 11)); // addu $dest, $0, $v0
 
-    // 5. تنظيف الـ Stack بعد العودة
     if !args.is_empty() {
         let space = (args.len() * 4) as u32;
         self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (space & 0xFFFF)); // addiu $sp, $sp, space
