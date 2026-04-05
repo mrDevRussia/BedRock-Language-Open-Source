@@ -16,5 +16,3 @@ Phase: Transitioning from Compiler Development to Ecosystem Expansion.
 
 Roadmap
 The project has successfully moved past the core engine phase. Current efforts are focused on building the standard hardware abstraction libraries (HAL), including VGA display drivers, keyboard input handling, and basic memory management.
-
-BedRock: Control the hardware. Master the machine.
