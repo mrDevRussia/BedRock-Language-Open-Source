@@ -14,6 +14,7 @@ pub enum Statement {
     Outb(Expression, Expression),
     Poke(Expression, Expression),
     Break,
+    CallPtr(Expression),
     ArrayDefine(String, Vec<u64>),
     StringDefine(String, String)
 }

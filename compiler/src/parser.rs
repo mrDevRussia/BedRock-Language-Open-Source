@@ -81,6 +81,7 @@
         if self.match_token(Token::Outb) { return self.outb_stmt(); }
         if self.match_token(Token::Poke) { return self.poke_stmt(); }
         if self.match_token(Token::Asm) { return self.asm_stmt(); }
+        if self.match_token(Token::Call) { return self.callptr_stmt(); }
         
         let token = self.advance();
         if let Token::Identifier(id) = token {
@@ -424,6 +425,14 @@
             self.consume(Token::SemiColon);
             Statement::Asm(c)
         }
+ 
+        fn callptr_stmt(&mut self) -> Statement {
+    self.consume(Token::LParen);
+    let expr = self.parse_expression();
+    self.consume(Token::RParen);
+    self.consume(Token::SemiColon);
+    Statement::CallPtr(expr)
+}
         
         fn match_token(&mut self, t: Token) -> bool { 
             if self.check(t) { 

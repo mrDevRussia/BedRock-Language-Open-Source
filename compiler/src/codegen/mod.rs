@@ -1,7 +1,16 @@
 use crate::ast::{Statement, Expression};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use serde::Serialize;
 
 const BASE_ADDR: u32 = 0x80000000;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceMapEntry {
+    pub line: usize,
+    pub address: u32,
+    pub instruction: u32,
+    pub source: String,
+}
 
 pub struct Codegen { 
     base_addr: u32,  
@@ -17,7 +26,9 @@ pub struct Codegen {
     next_addr: u32,                     
     static_data: Vec<(u32, Vec<u8>)>,   
     in_function: bool,                  
-    local_offset: u32,                  
+    local_offset: u32,
+    source_map: Vec<SourceMapEntry>,
+    current_line: usize,
 }
 
 struct LoopContext {
@@ -42,8 +53,10 @@ impl Codegen {
             reg_pool: pool,
             next_addr: BASE_ADDR,
             static_data: Vec::new(),
-            in_function: false,
+            in_function: false,                  
             local_offset: 0,
+            source_map: Vec::new(),
+            current_line: 0,
         }
     }
 
@@ -54,11 +67,11 @@ impl Codegen {
 
     // --- Phase 0: محرك التجميع الرئيسي ---
     pub fn compile(&mut self, stmts: &[Statement]) -> Vec<u8> {
-        self.code.clear();
+    self.code.clear();
         self.symbols.clear();
         self.static_data.clear();
         self.root_symbols.clear();
-
+        self.source_map.clear();
         // 1. تجميع الـ Root Symbols (BASE, DATA, STACK)
         for s in stmts {
             if let Statement::Root(name, Expression::Number(val)) = s {
@@ -154,6 +167,10 @@ impl Codegen {
         self.code.iter().flat_map(|&instr| instr.to_be_bytes().to_vec()).collect()
     }
 
+ pub fn set_current_line(&mut self, line: usize) {
+        self.current_line = line;
+    }
+
     fn generate_stmt(&mut self, stmt: &Statement) {
         match stmt {
             Statement::FunctionDefine(name, params, body) => {
@@ -171,11 +188,20 @@ impl Codegen {
                     self.current_params.insert(p.clone(), 32 + (i * 4) as u32);
                 }
 
+               // نحتاج نعرف عنوان الـ epilogue قبل ما نولّد الـ body
+                // الحل: نحفظ placeholder ونعمل back-patch
+                let exit_patch_idx = self.code.len();
+                self.emit(0x08000000); // placeholder لـ jump للـ epilogue
+                self.emit(0x00000000); // nop
+                self.current_func_exit = Some(exit_patch_idx);
+
                 for s in body { self.generate_stmt(s); }
 
-                // Epilogue
-                let exit_idx = self.code.len();
-                self.current_func_exit = Some(exit_idx);
+                // دلوقتي نعرف عنوان الـ epilogue الحقيقي
+                let epilogue_idx = self.code.len();
+                // نعمل back-patch للـ placeholder jump
+                self.code[exit_patch_idx] = 0x08000000 | self.get_jump_target(epilogue_idx);
+
                 self.emit(0x8FBF001C); // lw $ra, 28($sp)
                 self.emit(0x27BD0020); // addiu $sp, $sp, 32
                 self.emit(0x03E00008); // jr $ra
@@ -356,6 +382,16 @@ impl Codegen {
             Statement::Asm(hex) => {
                 if let Ok(instr) = u32::from_str_radix(hex, 16) { self.emit(instr); }
             }
+            Statement::CallPtr(expr) => {
+                let reg = self.alloc_reg();
+                self.gen_expr(expr, reg);
+                let jalr = 0x00000009u32
+                    | (reg << 21)
+                    | (31 << 11);
+                self.emit(jalr);
+                self.emit(0x00000000);
+                self.free_reg(reg);
+            }
             _ => {}
         }
     }
@@ -524,7 +560,16 @@ Expression::Call(name, args) => {
         }
     }
 
-    fn emit(&mut self, instr: u32) { self.code.push(instr); }
+    fn emit(&mut self, instr: u32) {
+        let address = self.base_addr + (self.code.len() as u32 * 4);
+        self.source_map.push(SourceMapEntry {
+            line: self.current_line,
+            address,
+            instruction: instr,
+            source: String::new(),
+        });
+        self.code.push(instr);
+    }
 
     fn emit_li(&mut self, reg: u32, imm: u32) {
         let hi = (imm >> 16) & 0xFFFF;
@@ -535,6 +580,10 @@ Expression::Call(name, args) => {
             self.emit(0x3C000000 | (reg << 16) | hi); // lui $reg, hi
             if lo != 0 { self.emit(0x34000000 | (reg << 21) | (reg << 16) | lo); } // ori
         }
+    }
+
+pub fn get_source_map(&self) -> &Vec<SourceMapEntry> {
+        &self.source_map
     }
 
     fn alloc_reg(&mut self) -> u32 { self.reg_pool.pop_front().unwrap_or(8) }

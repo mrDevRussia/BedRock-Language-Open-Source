@@ -1,3 +1,4 @@
+
 mod ast; mod lexer; mod parser; mod codegen;
 use std::{env, fs, path::Path};
 
@@ -37,6 +38,8 @@ fn main() {
     let mut codegen = codegen::Codegen::new();
     let binary = codegen.compile(&program);
     fs::write(source_path.with_extension("bin"), &binary).expect("Write failed");
+    let map_json = serde_json::to_string_pretty(codegen.get_source_map()).expect("Map failed");
+    fs::write(source_path.with_extension("map.json"), map_json).expect("Map write failed");
     let mut img = vec![0u8; 1474560];
     img[0..binary.len().min(512)].copy_from_slice(&binary[0..binary.len().min(512)]);
     fs::write("bedrock_os.img", img).expect("Img failed");

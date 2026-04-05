@@ -1,6 +1,6 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include,
+    Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include, Call,
     Identifier(String), Number(u64), StringLiteral(String),
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Colon, SemiColon, Comma, Equal,ShiftLeft,  // لتمثيل <<
     ShiftRight,
@@ -171,7 +171,8 @@ impl Lexer {
             "break" => Token::Break,
             "poke" => Token::Poke, 
             "peek" => Token::Peek, 
-            "include" => Token::Include, 
+            "include" => Token::Include,
+            "call" => Token::Call,
             _ => Token::Identifier(s)
         }
     }
