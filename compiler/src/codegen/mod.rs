@@ -110,6 +110,15 @@ impl Codegen {
             }
         }
 
+ 
+        for s in stmts {
+            if let Statement::FunctionDefine(name, _, _) = s {
+       
+                self.functions.insert(name.clone(), 0);
+            }
+        }
+
+   
         for s in stmts {
             if let Statement::FunctionDefine(_, _, _) = s {
                 self.generate_stmt(s);
@@ -157,7 +166,18 @@ impl Codegen {
         self.current_line = line;
     }
 
-    fn generate_stmt(&mut self, stmt: &Statement) {
+   fn generate_stmt(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::Let(_, _) | Statement::Assignment(_, _) |
+            Statement::Call(_, _) | Statement::Return(_) |
+            Statement::Poke(_, _) | Statement::Outb(_, _) |
+            Statement::Asm(_) | Statement::Break | Statement::CallPtr(_) |
+            Statement::ArrayAssign(_, _, _) => {
+                self.current_line += 1;
+            }
+            _ => {}
+        }
+
         match stmt {
             Statement::FunctionDefine(name, params, body) => {
                 self.functions.insert(name.clone(), self.code.len());
@@ -389,7 +409,7 @@ impl Codegen {
                     if let Some(&offset) = self.current_params.get(name) {
                         self.emit(0x8C000000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from param
                     } else if let Some(&offset) = self.local_vars.get(name) {
-                        self.emit(0x8FA00000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from local
+                        self.emit(0x8C000000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from local
                     } else {
                         let addr = *self.symbols.get(name).unwrap_or(&0x80010000);
                         let addr_reg = self.alloc_reg();

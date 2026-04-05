@@ -461,6 +461,7 @@
             self.peek() == Token::EOF 
         }
         
+        #[allow(dead_code)]
         fn match_any(&mut self, ops: &[&str]) -> bool {
             let c = self.peek();
             for op in ops {
@@ -486,6 +487,7 @@
             false
         }
         
+        #[allow(dead_code)]
         fn previous_op(&self) -> String {
             match self.tokens.get(self.pos-1) {
                 Some(Token::Caret) => "^".into(),
