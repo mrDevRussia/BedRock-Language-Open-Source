@@ -491,8 +491,8 @@ impl Codegen {
                 let base_addr = *self.symbols.get(name).unwrap_or(&0x80010000);
                 let addr_reg = self.alloc_reg();
                 self.emit_li(addr_reg, base_addr);
-                self.emit(0x00000021 | (addr_reg << 21) | (idx_reg << 16) | (dest_reg << 11)); // addu
-                self.emit(0x8C000000 | (dest_reg << 21) | (dest_reg << 16)); // lw $dest, 0($dest)
+                self.emit(0x00000021 | (addr_reg << 21) | (idx_reg << 16) | (addr_reg << 11)); // addu → في addr_reg
+                self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16)); // LW base=addr_reg ✓
                 self.free_reg(addr_reg);
                 self.free_reg(idx_reg);
             }
@@ -582,7 +582,12 @@ pub fn get_source_map(&self) -> &Vec<SourceMapEntry> {
         &self.source_map
     }
 
-    fn alloc_reg(&mut self) -> u32 { self.reg_pool.pop_front().unwrap_or(8) }
+    fn alloc_reg(&mut self) -> u32 {
+    self.reg_pool.pop_front().unwrap_or_else(|| {
+        eprintln!("[CODEGEN WARNING] Register pool exhausted! Expression too deep, reusing $t0.");
+        8
+    })
+}
     fn free_reg(&mut self, reg: u32) {
         if (8..=15).contains(&reg) && !self.reg_pool.contains(&reg) {
             self.reg_pool.push_back(reg);
