@@ -16,3 +16,10 @@ Phase: Transitioning from Compiler Development to Ecosystem Expansion.
 
 Roadmap
 The project has successfully moved past the core engine phase. Current efforts are focused on building the standard hardware abstraction libraries (HAL), including VGA display drivers, keyboard input handling, and basic memory management.
+
+
+# Links:
+
+VS Code Marketplace: https://marketplace.visualstudio.com/publishers/mrDevRussia
+
+VS Code BedRock Extension: https://marketplace.visualstudio.com/items?itemName=mrDevRussia.bedrock-lang
