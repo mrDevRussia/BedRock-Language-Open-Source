@@ -66,11 +66,23 @@ impl Codegen {
     }
 
     pub fn compile(&mut self, stmts: &[Statement]) -> Vec<u8> {
-    self.code.clear();
-        self.symbols.clear();
-        self.static_data.clear();
-        self.root_symbols.clear();
-        self.source_map.clear();
+        self.code.clear();
+self.symbols.clear();
+self.static_data.clear();
+self.root_symbols.clear();
+self.source_map.clear();
+self.functions.clear();
+self.local_vars.clear();
+self.current_params.clear();
+self.local_offset = 0;
+self.in_function = false;
+self.loop_stack.clear();
+self.current_line = 0;
+
+self.reg_pool.clear();
+for i in 8..=15 { self.reg_pool.push_back(i); }
+
+
         for s in stmts {
             if let Statement::Root(name, Expression::Number(val)) = s {
                 self.root_symbols.insert(name.clone(), *val as u32);
@@ -111,23 +123,24 @@ impl Codegen {
         }
 
  
-        for s in stmts {
-            if let Statement::FunctionDefine(name, _, _) = s {
-       
-                self.functions.insert(name.clone(), 0);
-            }
-        }
+        
+   for s in stmts {
+    if let Statement::FunctionDefine(name, _, _) = s {
 
-   
-        for s in stmts {
-            if let Statement::FunctionDefine(_, _, _) = s {
-                self.generate_stmt(s);
-            }
-        }
+        self.functions.entry(name.clone()).or_insert(0);
+    }
+}
+
+
+for s in stmts {
+    if let Statement::FunctionDefine(_, _, _) = s {
+        self.generate_stmt(s);
+    }
+}
 
         let init_start_idx = self.code.len(); 
         let target = self.get_jump_target(init_start_idx); 
-        self.code[global_jump_patch] = 0x08000000 | target;
+        self.patch(global_jump_patch, 0x08000000 | target);
 
         let static_data_copy = self.static_data.clone();
         for (addr, bytes) in static_data_copy {
@@ -190,7 +203,7 @@ impl Codegen {
 
                 self.current_params.clear();
                 for (i, p) in params.iter().enumerate() {
-                    self.current_params.insert(p.clone(), 32 + (i * 4) as u32);
+                    self.current_params.insert(p.clone(), (32 + i * 4) as u32);
                 }
 
                 let exit_patch_idx = self.code.len();
@@ -202,7 +215,7 @@ impl Codegen {
 
                 let epilogue_idx = self.code.len();
            
-                self.code[exit_patch_idx] = 0x08000000 | self.get_jump_target(epilogue_idx);
+                self.patch(exit_patch_idx, 0x08000000 | self.get_jump_target(epilogue_idx));
 
                 self.emit(0x8FBF001C);
                 self.emit(0x27BD0020);
@@ -221,19 +234,24 @@ impl Codegen {
                     arg_regs.push(r);
                 }
                 if !args.is_empty() {
-                    let space = (args.len() * 4) as u32;
-                    let neg_space = (-(space as i32)) as u32;
-                    self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (neg_space & 0xFFFF));
-                }
-                for (i, &reg) in arg_regs.iter().enumerate() {
-                    self.emit(0xAC000000 | (29 << 21) | (reg << 16) | ((i * 4) as u32 & 0xFFFF));
-                    self.free_reg(reg);
-                }
-                if let Some(&idx) = self.functions.get(func_name) {
-                    let target = self.get_jump_target(idx);
-                    self.emit(0x0C000000 | target); // jal
-                    self.emit(0x00000000);
-                }
+    let space = (args.len() * 4) as u32;
+    let neg_space = (-(space as i32)) as u32;
+    self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (neg_space & 0xFFFF));
+    for (i, &reg) in arg_regs.iter().enumerate() {
+        self.emit(0xAC000000 | (29 << 21) | (reg << 16) | ((i * 4) as u32 & 0xFFFF));
+        self.free_reg(reg);
+    }
+}
+               let patch_idx = self.code.len();
+self.emit(0x0C000000);
+self.emit(0x00000000);
+if let Some(&idx) = self.functions.get(func_name) {
+    let target = self.get_jump_target(idx);
+    self.patch(patch_idx, 0x0C000000 | target);
+} else {
+    eprintln!("[CODEGEN ERROR] Function '{}' not defined!", func_name);
+    std::process::exit(1);
+}
                 if !args.is_empty() {
                     let space = (args.len() * 4) as u32;
                     self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (space & 0xFFFF));
@@ -294,10 +312,10 @@ impl Codegen {
                     self.emit(0x08000000); // Jump over else
                     self.emit(0x00000000);
                     let else_start = self.code.len();
-                    self.code[b_patch] |= ((else_start as i32 - b_patch as i32 - 2) as u16) as u32;
+                    self.code[b_patch] |= ((else_start as i32 - b_patch as i32 - 1) as u16) as u32;
                     for s in else_stmts { self.generate_stmt(s); }
                     let end = self.code.len();
-                    self.code[j_patch] |= self.get_jump_target(end);
+                    self.patch(j_patch, 0x08000000 | self.get_jump_target(end));
                 } else {
                     let end = self.code.len();
                     self.code[b_patch] |= ((end as i32 - b_patch as i32 - 1) as u16) as u32;
@@ -321,10 +339,11 @@ impl Codegen {
                 self.emit(0x00000000);
                 
                 let end = self.code.len();
-                self.code[exit_patch] |= ((end as i32 - exit_patch as i32 - 1) as u16) as u32;
+               let offset = ((end as i32 - exit_patch as i32 - 1) as u16) as u32;
+               self.patch(exit_patch, self.code[exit_patch] | offset);
                 if let Some(ctx) = self.loop_stack.pop() {
                     for pos in ctx.break_patches {
-                        self.code[pos] |= ((end as i32 - pos as i32 - 1) as u16) as u32;
+                        self.patch(pos, 0x08000000 | self.get_jump_target(end));
                     }
                 }
             }
@@ -338,7 +357,7 @@ impl Codegen {
                 if let Some(ctx) = self.loop_stack.pop() {
                     let end = self.code.len();
                     for pos in ctx.break_patches {
-                        self.code[pos] |= ((end as i32 - pos as i32 - 1) as u16) as u32;
+                        self.patch(pos, 0x08000000 | self.get_jump_target(end));
                     }
                 }
             }
@@ -347,18 +366,18 @@ impl Codegen {
                 if let Some(ctx) = self.loop_stack.last_mut() {
                     let pos = self.code.len();
                     ctx.break_patches.push(pos);
-                    self.emit(0x10000000); // beq $0, $0 (unconditional branch)
-                    self.emit(0x00000000);
+                   self.emit(0x08000000);
+                   self.emit(0x00000000);
                 }
             }
 
             Statement::Return(maybe_expr) => {
-                if let Some(expr) = maybe_expr { self.gen_expr(expr, 2); } // $v0 = 2
-                if let Some(exit) = self.current_func_exit {
-                    self.emit(0x08000000 | self.get_jump_target(exit));
-                    self.emit(0x00000000);
-                }
-            }
+    if let Some(expr) = maybe_expr { self.gen_expr(expr, 2); } // $v0 = 2
+   if let Some(exit) = self.current_func_exit {
+    self.emit(0x08000000 | self.get_jump_target(exit));
+    self.emit(0x00000000);
+    }
+}
 
             Statement::Poke(addr_expr, val_expr) => {
                 let addr_reg = self.alloc_reg();
@@ -407,9 +426,9 @@ impl Codegen {
                     self.emit_li(dest_reg, addr);
                 } else if self.in_function {
                     if let Some(&offset) = self.current_params.get(name) {
-                        self.emit(0x8C000000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from param
+                        self.emit(0x8F000000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from param
                     } else if let Some(&offset) = self.local_vars.get(name) {
-                        self.emit(0x8C000000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from local
+                        self.emit(0x8F000000 | (29 << 21) | (dest_reg << 16) | (offset & 0xFFFF)); // lw from local
                     } else {
                         let addr = *self.symbols.get(name).unwrap_or(&0x80010000);
                         let addr_reg = self.alloc_reg();
@@ -418,7 +437,13 @@ impl Codegen {
                         self.free_reg(addr_reg);
                     }
                 } else {
-                    let addr = *self.symbols.get(name).expect("Variable not defined!");
+                    let addr = match self.symbols.get(name) {
+    Some(&a) => a,
+    None => {
+        eprintln!("[CODEGEN ERROR] Variable '{}' not defined!", name);
+        std::process::exit(1);
+    }
+};
                     let addr_reg = self.alloc_reg();
                     self.emit_li(addr_reg, addr);
                     self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16));
@@ -537,15 +562,18 @@ Expression::Call(name, args) => {
         }
     }
 
-    if let Some(&idx) = self.functions.get(name) {
-        let target = self.get_jump_target(idx);
-        self.emit(0x0C000000 | target); // jal target
-        self.emit(0x00000000);          // nop (delay slot)
-    } else {
-        panic!("Function '{}' not defined before use!", name);
-    }
+    let patch_idx = self.code.len();
+self.emit(0x0C000000);
+self.emit(0x00000000);
+if let Some(&idx) = self.functions.get(name) {
+    let target = self.get_jump_target(idx);
+    self.patch(patch_idx, 0x0C000000 | target);
+} else {
+    eprintln!("[CODEGEN ERROR] Function '{}' not defined!", name);
+    std::process::exit(1);
+}
 
-    self.emit(0x00400021 | (0 << 21) | (2 << 16) | (dest_reg << 11)); // addu $dest, $0, $v0
+    self.emit(0x00000021 | (0 << 21) | (2 << 16) | (dest_reg << 11)); // addu $dest, $0, $v0
 
     if !args.is_empty() {
         let space = (args.len() * 4) as u32;
@@ -566,6 +594,11 @@ Expression::Call(name, args) => {
         });
         self.code.push(instr);
     }
+
+fn patch(&mut self, idx: usize, instr: u32) {
+    self.code[idx] = instr;
+    self.source_map[idx].instruction = instr;
+}
 
     fn emit_li(&mut self, reg: u32, imm: u32) {
         let hi = (imm >> 16) & 0xFFFF;
