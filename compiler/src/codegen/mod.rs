@@ -1,4 +1,4 @@
-use crate::ast::{Statement, Expression};
+	use crate::ast::{Statement, Expression, TypeKind};
 use std::collections::{HashMap, VecDeque};
 use serde::Serialize;
 
@@ -17,6 +17,9 @@ pub struct Codegen {
     code: Vec<u32>, 
     symbols: HashMap<String, u32>,      
     root_symbols: HashMap<String, u32>, 
+    bnw_entries: Vec<String>,
+    bnw_seen_above: bool,
+    bnw_seen_below: bool,
     functions: HashMap<String, usize>,  
     loop_stack: Vec<LoopContext>,   
     current_func_exit: Option<usize>,   
@@ -29,6 +32,9 @@ pub struct Codegen {
     local_offset: u32,
     source_map: Vec<SourceMapEntry>,
     current_line: usize,
+    struct_layouts: HashMap<String, Vec<(String, u32)>>,
+    struct_sizes:   HashMap<String, u32>,
+    var_structs:    HashMap<String, String>,
 }
 
 struct LoopContext {
@@ -57,6 +63,12 @@ impl Codegen {
             local_offset: 0,
             source_map: Vec::new(),
             current_line: 0,
+            struct_layouts: HashMap::new(),
+            bnw_entries: Vec::new(),
+            bnw_seen_above: false,
+            bnw_seen_below: false,
+            struct_sizes:   HashMap::new(),
+            var_structs:    HashMap::new(),
         }
     }
 
@@ -82,11 +94,54 @@ self.current_line = 0;
 self.reg_pool.clear();
 for i in 8..=15 { self.reg_pool.push_back(i); }
 
+self.bnw_entries.clear();
+self.bnw_seen_above = false;
+self.bnw_seen_below = false;
+
+let mut found_non_bnw = false;
+for s in stmts {
+    match s {
+        Statement::Bnw(text) => {
+            if found_non_bnw {
+                self.bnw_seen_below = true;
+            } else {
+                self.bnw_seen_above = true;
+            }
+            self.bnw_entries.push(text.clone());
+        }
+        Statement::Root(_, _, _) => {}
+        _ => { found_non_bnw = true; }
+    }
+}
+
+if self.bnw_seen_above && self.bnw_seen_below {
+    eprintln!(
+        "[BNW ERROR] Cannot mix 'bnw' above and below code!\n  Use 'bnw' only at the top OR only at the bottom.\n  Compiler will place all 'bnw' entries at the start of binary."
+    );
+    std::process::exit(1);
+}
+
+        self.struct_layouts.clear();
+        self.struct_sizes.clear();
+        self.var_structs.clear();
+        for s in stmts {
+            if let Statement::StructDefine(name, fields) = s {
+                let mut offset = 0u32;
+                let mut layout = Vec::new();
+                for (fname, _kind) in fields {
+                    layout.push((fname.clone(), offset));
+                    offset += 4; // word-aligned
+                }
+                self.struct_sizes.insert(name.clone(), offset);
+                self.struct_layouts.insert(name.clone(), layout);
+            }
+        }
+
 
         for s in stmts {
-            if let Statement::Root(name, Expression::Number(val)) = s {
-                self.root_symbols.insert(name.clone(), *val as u32);
-            }
+           if let Statement::Root(name, Expression::Number(val, _), _) = s {
+             self.root_symbols.insert(name.clone(), *val as u32);
+             }
         }
                 
         self.base_addr = *self.root_symbols.get("BASE").unwrap_or(&0x80000000);
@@ -100,9 +155,22 @@ for i in 8..=15 { self.reg_pool.push_back(i); }
         self.emit(0x08000000);
         self.emit(0x00000000);
 
+for text in &self.bnw_entries.clone() {
+    let bytes = text.as_bytes();
+    let padded_len = (bytes.len() + 3) & !3;
+    let mut padded = bytes.to_vec();
+    padded.resize(padded_len, 0x00);
+    for chunk in padded.chunks(4) {
+        let word = u32::from_be_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3]
+        ]);
+        self.emit(word);
+    }
+}
+
         for s in stmts {
             match s {
-                Statement::ArrayDefine(name, vals) => {
+                Statement::ArrayDefine(name, vals, _) => {
                     let addr = self.next_addr;
                     self.symbols.insert(name.clone(), addr);
                     let mut bytes = Vec::new();
@@ -118,6 +186,17 @@ for i in 8..=15 { self.reg_pool.push_back(i); }
                     self.static_data.push((addr, bytes.clone()));
                     self.next_addr += ((bytes.len() + 3) & !3) as u32;
                 }
+                Statement::StructInstance(name, struct_type) => {
+                    if let Some(&size) = self.struct_sizes.get(struct_type) {
+                        let addr = self.next_addr;
+                        self.symbols.insert(name.clone(), addr);
+                        self.var_structs.insert(name.clone(), struct_type.clone());
+                        self.next_addr += size;
+                    } else {
+                        eprintln!("[CODEGEN ERROR] Unknown struct type '{}'", struct_type);
+                        std::process::exit(1);
+                    }
+                }
                 _ => {}
             }
         }
@@ -125,7 +204,7 @@ for i in 8..=15 { self.reg_pool.push_back(i); }
  
         
    for s in stmts {
-    if let Statement::FunctionDefine(name, _, _) = s {
+    if let Statement::FunctionDefine(name, _, _, _) = s {
 
         self.functions.entry(name.clone()).or_insert(0);
     }
@@ -133,7 +212,7 @@ for i in 8..=15 { self.reg_pool.push_back(i); }
 
 
 for s in stmts {
-    if let Statement::FunctionDefine(_, _, _) = s {
+    if let Statement::FunctionDefine(_, _, _, _) = s {
         self.generate_stmt(s);
     }
 }
@@ -162,8 +241,9 @@ for s in stmts {
         }
 
         for s in stmts {
-            if !matches!(s, Statement::Root(_, _) | Statement::FunctionDefine(_, _, _) 
-               | Statement::ArrayDefine(_, _) | Statement::StringDefine(_, _)) {
+            if !matches!(s, Statement::Root(_, _, _) | Statement::FunctionDefine(_, _, _, _) 
+   | Statement::ArrayDefine(_, _, _) | Statement::StringDefine(_, _)
+   | Statement::StructDefine(_, _) | Statement::StructInstance(_, _)) {
                 self.generate_stmt(s);
             }
         }
@@ -181,7 +261,8 @@ for s in stmts {
 
    fn generate_stmt(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Let(_, _) | Statement::Assignment(_, _) |
+            Statement::Let(_, _, _) | Statement::Assignment(_, _) |
+            Statement::Bnw(_) |
             Statement::Call(_, _) | Statement::Return(_) |
             Statement::Poke(_, _) | Statement::Outb(_, _) |
             Statement::Asm(_) | Statement::Break | Statement::CallPtr(_) |
@@ -192,7 +273,7 @@ for s in stmts {
         }
 
         match stmt {
-            Statement::FunctionDefine(name, params, body) => {
+            Statement::FunctionDefine(name, params, body, _return_type) => {
                 self.functions.insert(name.clone(), self.code.len());
                 self.in_function = true;
                 self.local_offset = 0;
@@ -202,8 +283,8 @@ for s in stmts {
                 self.emit(0xAFBF001C);
 
                 self.current_params.clear();
-                for (i, p) in params.iter().enumerate() {
-                    self.current_params.insert(p.clone(), (32 + i * 4) as u32);
+                for (i, (p, _kind)) in params.iter().enumerate() {
+                   self.current_params.insert(p.clone(), (32 + i * 4) as u32);
                 }
 
                 let exit_patch_idx = self.code.len();
@@ -258,25 +339,98 @@ if let Some(&idx) = self.functions.get(func_name) {
                 }
             }
 
-            Statement::Let(name, value) | Statement::Assignment(name, value) => {
-                let val_reg = self.alloc_reg();
-                self.gen_expr(value, val_reg);
+  Statement::Let(name, value, kind) => {
+    let val_reg = self.alloc_reg();
+    self.gen_expr(value, val_reg);
+
+    match value {
+        Expression::Number(_, _) => {}
+        _ => { self.apply_type_mask(val_reg, kind); }
+    }
+
+    if self.in_function {
+        let offset = *self.local_vars.entry(name.clone()).or_insert_with(|| {
+            self.local_offset += 4; self.local_offset
+        });
+        self.emit(0xAFA00000 | (val_reg << 16) | (offset & 0xFFFF));
+    } else {
+        let addr = *self.symbols.entry(name.clone()).or_insert_with(|| {
+            let a = self.next_addr; self.next_addr += 4; a
+        });
+        let addr_reg = self.alloc_reg();
+        self.emit_li(addr_reg, addr);
+        self.emit(0xAC000000 | (addr_reg << 21) | (val_reg << 16));
+        self.free_reg(addr_reg);
+    }
+    self.free_reg(val_reg);
+}
+
+            Statement::StructDefine(_, _) => {} // layout already registered in pre-scan
+
+Statement::Bnw(text) => {
+    if self.in_function {
+        eprintln!(
+            "[BNW ERROR] 'bnw' is not allowed inside functions!\n  '{}'\n  Hint: use 'bnw' only at the top level.",
+            text
+        );
+        std::process::exit(1);
+    }
+
+}
+
+            Statement::StructInstance(name, struct_type) => {
+                // global: already allocated in compile() pre-scan
+                // local (in function): allocate on stack
                 if self.in_function {
-                    let offset = *self.local_vars.entry(name.clone()).or_insert_with(|| {
-                        self.local_offset += 4; self.local_offset
-                    });
-                    self.emit(0xAFA00000 | (val_reg << 16) | (offset & 0xFFFF)); // sw $val, offset($sp)
-                } else {
-                    let addr = *self.symbols.entry(name.clone()).or_insert_with(|| {
-                        let a = self.next_addr; self.next_addr += 4; a
-                    });
-                    let addr_reg = self.alloc_reg();
-                    self.emit_li(addr_reg, addr);
-                    self.emit(0xAC000000 | (addr_reg << 21) | (val_reg << 16)); // sw $val, 0($addr)
-                    self.free_reg(addr_reg);
+                    if let Some(&size) = self.struct_sizes.get(struct_type).cloned().as_ref() {
+                        self.var_structs.insert(name.clone(), struct_type.clone());
+                        self.local_offset += size;
+                        self.local_vars.insert(name.clone(), self.local_offset);
+                    }
                 }
-                self.free_reg(val_reg);
             }
+
+            Statement::Assignment(name, value) => {
+                // detect field assignment: "foo.bar"
+                if let Some(dot_pos) = name.find('.') {
+                    let var_name = name[..dot_pos].to_string();
+                    let field_name = name[dot_pos+1..].to_string();
+                    let offset = self.get_field_offset(&var_name, &field_name);
+                    let val_reg = self.alloc_reg();
+                    self.gen_expr(value, val_reg);
+                    if self.in_function {
+                        if let Some(&base_off) = self.local_vars.get(&var_name) {
+                            let total = base_off + offset;
+                            self.emit(0xAFA00000 | (val_reg << 16) | (total & 0xFFFF));
+                        }
+                    } else {
+                        let base_addr = *self.symbols.get(&var_name).unwrap_or(&0x80010000);
+                        let addr_reg = self.alloc_reg();
+                        self.emit_li(addr_reg, base_addr + offset);
+                        self.emit(0xAC000000 | (addr_reg << 21) | (val_reg << 16));
+                        self.free_reg(addr_reg);
+                    }
+                    self.free_reg(val_reg);
+                    return;
+                }
+    let val_reg = self.alloc_reg();
+    self.gen_expr(value, val_reg);
+    if self.in_function {
+        let offset = *self.local_vars.entry(name.clone()).or_insert_with(|| {
+            self.local_offset += 4; self.local_offset
+        });
+        self.emit(0xAFA00000 | (val_reg << 16) | (offset & 0xFFFF));
+    } else {
+        let addr = *self.symbols.entry(name.clone()).or_insert_with(|| {
+            let a = self.next_addr; self.next_addr += 4; a
+        });
+        let addr_reg = self.alloc_reg();
+        self.emit_li(addr_reg, addr);
+        self.emit(0xAC000000 | (addr_reg << 21) | (val_reg << 16));
+        self.free_reg(addr_reg);
+    }
+    self.free_reg(val_reg);
+}
 
             Statement::ArrayAssign(name, index_expr, val_expr) => {
                 let idx_reg = self.alloc_reg();
@@ -417,9 +571,35 @@ if let Some(&idx) = self.functions.get(func_name) {
         }
     }
 
+
+
+fn apply_type_mask(&mut self, reg: u32, kind: &TypeKind) {
+    match kind {
+        TypeKind::U8  => {
+            // andi $reg, $reg, 0xFF
+            self.emit(0x30000000 | (reg << 21) | (reg << 16) | 0xFF);
+        }
+        TypeKind::U16 => {
+            // andi $reg, $reg, 0xFFFF
+            self.emit(0x30000000 | (reg << 21) | (reg << 16) | 0xFFFF);
+        }
+        TypeKind::Bool => {
+            // andi $reg, $reg, 0x1
+            self.emit(0x30000000 | (reg << 21) | (reg << 16) | 0x1);
+        }
+
+        _ => {}
+    }
+}
+
+
+
     fn gen_expr(&mut self, expr: &Expression, dest_reg: u32) {
         match expr {
-            Expression::Number(n) => { self.emit_li(dest_reg, *n as u32); }
+            Expression::Number(n, kind) => {
+    self.emit_li(dest_reg, *n as u32);
+    self.apply_type_mask(dest_reg, kind);
+}
 
             Expression::Variable(name) => {
                 if let Some(&addr) = self.root_symbols.get(name) {
@@ -523,12 +703,12 @@ if let Some(&idx) = self.functions.get(func_name) {
             }
 
             Expression::Peek(addr_expr) => {
-                let addr_reg = self.alloc_reg();
-                self.gen_expr(addr_expr, addr_reg);
-                self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16)); // lw
-                self.free_reg(addr_reg);
-            }
+    let addr_reg = self.alloc_reg();
+    self.gen_expr(addr_expr, addr_reg);
+    self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16));
+    self.free_reg(addr_reg);
 
+}
             Expression::WaitKey => {
              
                 self.emit_li(dest_reg, 0x80020000);
@@ -538,6 +718,22 @@ if let Some(&idx) = self.functions.get(func_name) {
             Expression::Inb(addr_expr) => {
                 let addr_reg = self.alloc_reg();
                 self.gen_expr(addr_expr, addr_reg);
+                self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16));
+                self.free_reg(addr_reg);
+            }
+
+            Expression::FieldAccess(var_name, field_name) => {
+                let offset = self.get_field_offset(var_name, field_name);
+                if self.in_function {
+                    if let Some(&base_off) = self.local_vars.get(var_name) {
+                        let total = base_off + offset;
+                        self.emit(0x8FA00000 | (dest_reg << 16) | (total & 0xFFFF)); // lw from stack
+                        return;
+                    }
+                }
+                let base_addr = *self.symbols.get(var_name).unwrap_or(&0x80010000);
+                let addr_reg = self.alloc_reg();
+                self.emit_li(addr_reg, base_addr + offset);
                 self.emit(0x8C000000 | (addr_reg << 21) | (dest_reg << 16));
                 self.free_reg(addr_reg);
             }
@@ -565,6 +761,9 @@ Expression::Call(name, args) => {
     let patch_idx = self.code.len();
 self.emit(0x0C000000);
 self.emit(0x00000000);
+
+
+
 if let Some(&idx) = self.functions.get(name) {
     let target = self.get_jump_target(idx);
     self.patch(patch_idx, 0x0C000000 | target);
@@ -577,11 +776,54 @@ if let Some(&idx) = self.functions.get(name) {
 
     if !args.is_empty() {
         let space = (args.len() * 4) as u32;
-        self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (space & 0xFFFF)); // addiu $sp, $sp, space
+        self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | (space & 0xFFFF));
     }
 }
 
+            Expression::FieldAssign(var_name, field_name, val_expr) => {
+                let offset = self.get_field_offset(var_name, field_name);
+                let val_reg = self.alloc_reg();
+                self.gen_expr(val_expr, val_reg);
+                if self.in_function {
+                    if let Some(&base_off) = self.local_vars.get(var_name) {
+                        let total = base_off + offset;
+                        self.emit(0xAFA00000 | (val_reg << 16) | (total & 0xFFFF));
+                    }
+                } else {
+                    let base_addr = *self.symbols.get(var_name).unwrap_or(&0x80010000);
+                    let addr_reg = self.alloc_reg();
+                    self.emit_li(addr_reg, base_addr + offset);
+                    self.emit(0xAC000000 | (addr_reg << 21) | (val_reg << 16));
+                    self.free_reg(addr_reg);
+                }
+                self.free_reg(val_reg);
+            }
+
         }
+    }
+
+    fn get_field_offset(&self, var_name: &str, field_name: &str) -> u32 {
+        let struct_type = match self.var_structs.get(var_name) {
+            Some(t) => t,
+            None => {
+                eprintln!("[CODEGEN ERROR] '{}' is not a struct instance", var_name);
+                std::process::exit(1);
+            }
+        };
+        let layout = match self.struct_layouts.get(struct_type) {
+            Some(l) => l,
+            None => {
+                eprintln!("[CODEGEN ERROR] Unknown struct type '{}'", struct_type);
+                std::process::exit(1);
+            }
+        };
+        layout.iter()
+            .find(|(f, _)| f == field_name)
+            .map(|(_, off)| *off)
+            .unwrap_or_else(|| {
+                eprintln!("[CODEGEN ERROR] Struct '{}' has no field '{}'", struct_type, field_name);
+                std::process::exit(1);
+            })
     }
 
     fn emit(&mut self, instr: u32) {

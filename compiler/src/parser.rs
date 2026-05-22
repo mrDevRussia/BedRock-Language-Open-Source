@@ -1,5 +1,5 @@
     use crate::lexer::Token;
-    use crate::ast::{Statement, Expression};
+    use crate::ast::{Statement, Expression, TypeKind};
 
     pub struct Parser { 
         tokens: Vec<Token>, 
@@ -40,25 +40,36 @@
             _ => "".to_string(),
         }
     }
+
+
+
+
+        fn parse_type(&mut self) -> TypeKind {
+    match self.peek() {
+        Token::U8  => { self.advance(); TypeKind::U8  }
+        Token::U16 => { self.advance(); TypeKind::U16 }
+        Token::U32 => { self.advance(); TypeKind::U32 }
+        Token::U64 => { self.advance(); TypeKind::U64 }
+        Token::I8  => { self.advance(); TypeKind::I8  }
+        Token::I16 => { self.advance(); TypeKind::I16 }
+        Token::I32 => { self.advance(); TypeKind::I32 }
+        Token::I64 => { self.advance(); TypeKind::I64 }
+        Token::Bool => { self.advance(); TypeKind::Bool }
+        _ => {
+            eprintln!("\x1b[33m[TYPE WARNING] No type specified, defaulting to u32\x1b[0m");
+            TypeKind::Unknown
+        }
+    }
+}
+
         
         pub fn parse_program(&mut self) -> Vec<Statement> {
-            let mut stmts = Vec::new();
-            while !self.is_at_end() { 
-                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.parse_statement()
-                })) {
-                    Ok(stmt) => stmts.push(stmt),
-                    Err(_) => {
-                        eprintln!("[PARSER ERROR] Failed at token position: {}", self.pos);
-                        if self.pos < self.tokens.len() {
-                            eprintln!("[PARSER ERROR] Current token: {:?}", self.tokens[self.pos]);
-                        }
-                        panic!("Parse error - see details above");
-                    }
-                }
-            }
-            stmts
-        }
+    let mut stmts = Vec::new();
+    while !self.is_at_end() {
+        stmts.push(self.parse_statement());
+    }
+    stmts
+}
         
     fn return_statement(&mut self) -> Statement {
             if self.match_token(Token::SemiColon) {
@@ -82,12 +93,32 @@
         if self.match_token(Token::Poke) { return self.poke_stmt(); }
         if self.match_token(Token::Asm) { return self.asm_stmt(); }
         if self.match_token(Token::Call) { return self.callptr_stmt(); }
-        
+        if self.match_token(Token::Struct) { return self.parse_struct(); }
+        if self.match_token(Token::Struct) { return self.parse_struct(); }
+if self.match_token(Token::Bnw) {
+    if let Token::StringLiteral(s) = self.advance() {
+        self.consume(Token::SemiColon);
+        return Statement::Bnw(s);
+    } else {
+        eprintln!("[BNW ERROR] Expected string after 'bnw'");
+        std::process::exit(1);
+    }
+}
         let token = self.advance();
         if let Token::Identifier(id) = token {
             
             if self.match_token(Token::LParen) { return self.call_stmt(id); }
-            
+
+            if self.match_token(Token::Dot) {
+    let field = if let Token::Identifier(f) = self.advance() { f } else {
+        eprintln!("[PARSER ERROR] Expected field name after '.'");
+        std::process::exit(1);
+    };
+    self.consume(Token::Equal);
+    let val = self.parse_expression();
+    self.consume(Token::SemiColon);
+    return Statement::Assignment(format!("{}.{}", id, field), val);
+}
          
             if self.match_token(Token::LBracket) {
                 let idx = self.parse_expression();
@@ -102,50 +133,81 @@
             if self.match_token(Token::Equal) { return self.assign_stmt(id); }
             
             eprintln!("[PARSER ERROR] Invalid statement starting with identifier '{}'", id);
-            panic!("Invalid syntax");
+            std::process::exit(1);
         } else {
             eprintln!("[PARSER ERROR] Unexpected token: {:?}", token);
-            panic!("Parse error");
+            std::process::exit(1);
         }
     }
         
         fn let_or_array_or_string(&mut self) -> Statement {
-            let n = if let Token::Identifier(s) = self.advance() { 
-                s 
-            } else { 
-                eprintln!("[PARSER ERROR] Expected identifier after 'let'");
-                eprintln!("[HINT] Syntax: let name = value;");
-                panic!("Invalid let statement");
-            };
-            
-            self.consume(Token::Equal);
-            
-            if self.match_token(Token::LBracket) {
-                let mut vals = Vec::new();
-                while !self.check(Token::RBracket) {
-                    if let Token::Number(num) = self.advance() { 
-                        vals.push(num); 
-                    } else {
-                        eprintln!("[PARSER ERROR] Expected number in array literal");
-                        panic!("Invalid array element");
-                    }
-                    if !self.match_token(Token::Comma) { break; }
-                }
-                self.consume(Token::RBracket); 
-                self.consume(Token::SemiColon);
-                return Statement::ArrayDefine(n, vals);
-            }
-            
-            if let Token::StringLiteral(s) = self.peek() {
-                self.advance(); 
-                self.consume(Token::SemiColon);
-                return Statement::StringDefine(n, s);
-            }
-            
-            let v = self.parse_expression(); 
+    let n = if let Token::Identifier(s) = self.advance() {
+        s
+    } else {
+        std::process::exit(1);
+        
+    };
+
+
+
+    let kind = if self.match_token(Token::At) {
+        if let Token::Identifier(struct_name) = self.peek() {
+
+            self.advance();
             self.consume(Token::SemiColon);
-            Statement::Let(n, v)
+            return Statement::StructInstance(n, struct_name);
         }
+        let k = self.parse_type();
+        if k == TypeKind::Unknown {
+            eprintln!("[PARSER ERROR] Expected type after '@'");
+            std::process::exit(1);
+        }
+        k
+    } else {
+        eprintln!("[TYPE WARNING] '{}' has no type annotation, defaulting to u32", n);
+        TypeKind::Unknown
+    };
+
+    self.consume(Token::Equal);
+
+
+    if self.match_token(Token::LBracket) {
+        let mut vals = Vec::new();
+        while !self.check(Token::RBracket) {
+            if let Token::Number(num) = self.advance() {
+                vals.push(num);
+            } else {
+                eprintln!("[PARSER ERROR] Expected number in array literal");
+                std::process::exit(1);
+            }
+            if !self.match_token(Token::Comma) { break; }
+        }
+        self.consume(Token::RBracket);
+        self.consume(Token::SemiColon);
+        return Statement::ArrayDefine(n, vals, kind);
+    }
+
+
+    if let Token::StringLiteral(s) = self.peek() {
+        self.advance();
+        self.consume(Token::SemiColon);
+        return Statement::StringDefine(n, s);
+    }
+
+    let v = self.parse_expression();
+
+
+    if let Expression::Number(num, _) = &v {
+        if kind != TypeKind::Unknown && *num > kind.max_value() {
+            eprintln!("[TYPE ERROR] Value {} exceeds max value for type {} (max: {})",
+                num, kind.name(), kind.max_value());
+            std::process::exit(1);
+        }
+    }
+
+    self.consume(Token::SemiColon);
+    Statement::Let(n, v, kind)
+}
         
         fn outb_stmt(&mut self) -> Statement {
             self.consume(Token::LParen);
@@ -168,39 +230,53 @@
         }
         
         fn function_define(&mut self) -> Statement {
-            let name = if let Token::Identifier(s) = self.advance() { 
-                s 
-            } else { 
-                eprintln!("[PARSER ERROR] Expected function name after 'fn'");
-                panic!("Invalid function definition");
+    let name = if let Token::Identifier(s) = self.advance() {
+        s
+    } else {
+        eprintln!("[PARSER ERROR] Expected function name after 'fn'");
+        std::process::exit(1);
+    };
+
+    self.consume(Token::LParen);
+    let mut params = Vec::new();
+
+    if !self.check(Token::RParen) {
+        loop {
+            let pname = if let Token::Identifier(p) = self.advance() {
+                p
+            } else {
+                eprintln!("[PARSER ERROR] Expected parameter name");
+                std::process::exit(1);
             };
-            
-            self.consume(Token::LParen);
-            let mut params = Vec::new();
-            
-            if !self.check(Token::RParen) {
-                loop {
-                    if let Token::Identifier(p) = self.advance() { 
-                        params.push(p); 
-                    } else {
-                        eprintln!("[PARSER ERROR] Expected parameter name");
-                        panic!("Invalid parameter");
-                    }
-                    if !self.match_token(Token::Comma) { break; }
-                }
-            }
-            
-            self.consume(Token::RParen); 
-            self.consume(Token::LBrace);
-            
-            let mut body = Vec::new();
-            while !self.check(Token::RBrace) && !self.is_at_end() { 
-                body.push(self.parse_statement()); 
-            }
-            
-            self.consume(Token::RBrace);
-            Statement::FunctionDefine(name, params, body)
+
+            let pkind = if self.match_token(Token::At) {
+                self.parse_type()
+            } else {
+                TypeKind::Unknown
+            };
+            params.push((pname, pkind));
+            if !self.match_token(Token::Comma) { break; }
         }
+    }
+
+    self.consume(Token::RParen);
+
+
+    let return_type = if self.match_token(Token::At) {
+        self.parse_type()
+    } else {
+        TypeKind::Unknown
+    };
+
+    self.consume(Token::LBrace);
+    let mut body = Vec::new();
+    while !self.check(Token::RBrace) && !self.is_at_end() {
+        body.push(self.parse_statement());
+    }
+    self.consume(Token::RBrace);
+
+    Statement::FunctionDefine(name, params, body, return_type)
+}
    
   fn parse_expression(&mut self) -> Expression {
     let mut expr = self.parse_term();
@@ -261,17 +337,17 @@
         match self.peek() {
    
             Token::LParen => {
-                self.advance(); // تخطي القوس (
+                self.advance(); 
                 let expr = self.parse_expression();
                 self.consume(Token::RParen);
                 expr
             }
             
-            Token::Number(n) => { 
-                self.advance(); 
-                Expression::Number(n) 
-            }
-
+         Token::Number(n) => { 
+    self.advance(); 
+    Expression::Number(n, TypeKind::Unknown) 
+               }
+            
 
         Token::Identifier(s) => {  
         self.advance();  
@@ -296,7 +372,14 @@
             self.consume(Token::RBracket);
             return Expression::ArrayAccess(s, Box::new(idx));
         }
-        
+        if self.match_token(Token::Dot) {
+    let field = if let Token::Identifier(f) = self.advance() { f } else {
+        eprintln!("[PARSER ERROR] Expected field name after '.'");
+        std::process::exit(1);
+    };
+    return Expression::FieldAccess(s, field);
+}
+
         Expression::Variable(s)  
     }
 
@@ -319,34 +402,41 @@
             _ => {
                 eprintln!("[PARSER ERROR] Unexpected token in expression: {:?}", self.peek());
                 eprintln!("[HINT] Expected: number, variable, (, or peek(...)");
-                panic!("Invalid expression");
+                std::process::exit(1);
             }
         }
     }
         
-        fn root_statement(&mut self) -> Statement {
-            let n = if let Token::Identifier(s) = self.advance() { 
-                s 
-            } else { 
-                eprintln!("[PARSER ERROR] Expected identifier after 'root'");
-                panic!("Invalid root declaration");
-            };
-            
-            self.consume(Token::Equal);
-            let v = self.parse_expression(); 
-            self.consume(Token::SemiColon);
-            Statement::Root(n, v)
-        }
-        
-        fn loop_statement(&mut self) -> Statement {
-            self.consume(Token::LBrace);
-            let mut b = Vec::new();
-            while !self.check(Token::RBrace) { 
-                b.push(self.parse_statement()); 
-            }
-            self.consume(Token::RBrace);
-            Statement::Loop(b)
-        }
+      fn root_statement(&mut self) -> Statement {
+    let n = if let Token::Identifier(s) = self.advance() {
+        s
+    } else {
+        eprintln!("[PARSER ERROR] Expected identifier after 'root'");
+        std::process::exit(1);
+    };
+
+
+    let kind = if self.match_token(Token::At) {
+        self.parse_type()
+    } else {
+        TypeKind::Unknown
+    };
+
+    self.consume(Token::Equal);
+    let v = self.parse_expression();
+    self.consume(Token::SemiColon);
+    Statement::Root(n, v, kind)
+}
+
+fn loop_statement(&mut self) -> Statement {
+    self.consume(Token::LBrace);
+    let mut b = Vec::new();
+    while !self.check(Token::RBrace) {
+        b.push(self.parse_statement());
+    }
+    self.consume(Token::RBrace);
+    Statement::Loop(b)
+}
         
         fn while_statement(&mut self) -> Statement {
             self.consume(Token::LParen); // استهلاك (
@@ -417,7 +507,7 @@
                 s
             } else {
                 eprintln!("[PARSER ERROR] Expected string literal for asm, got {:?}", token);
-                panic!("Invalid asm statement");
+               std::process::exit(1);
             };
             
             self.consume(Token::RParen); 
@@ -508,12 +598,32 @@
                 _ => "".into()
             }
         }
+fn parse_struct(&mut self) -> Statement {
+    let name = if let Token::Identifier(s) = self.advance() { s } else {
+        eprintln!("[PARSER ERROR] Expected struct name");
+        std::process::exit(1);
+    };
+    self.consume(Token::LBrace);
+    let mut fields = Vec::new();
+    while !self.check(Token::RBrace) && !self.is_at_end() {
+        let field_name = if let Token::Identifier(s) = self.advance() { s } else {
+            eprintln!("[PARSER ERROR] Expected field name");
+            std::process::exit(1);
+        };
+        self.consume(Token::At);
+        let kind = self.parse_type();
+        fields.push((field_name, kind));
+        if self.check(Token::Comma) { self.advance(); }
+    }
+    self.consume(Token::RBrace);
+    Statement::StructDefine(name, fields)
+}
 
         fn consume(&mut self, t: Token) { 
             if !self.match_token(t.clone()) { 
                 eprintln!("[PARSER ERROR] Expected {:?}, got {:?} at position {}", 
                     t, self.peek(), self.pos);
-                panic!("Syntax error");
+                std::process::exit(1);
             } 
         }
     }
