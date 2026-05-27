@@ -94,7 +94,11 @@
         if self.match_token(Token::Asm) { return self.asm_stmt(); }
         if self.match_token(Token::Call) { return self.callptr_stmt(); }
         if self.match_token(Token::Struct) { return self.parse_struct(); }
-        if self.match_token(Token::Struct) { return self.parse_struct(); }
+    
+        if self.match_token(Token::Int)        { return self.int_handler_stmt(); }
+        if self.match_token(Token::IntEnable)  { return self.int_enable_stmt(); }
+        if self.match_token(Token::IntDisable) { self.consume(Token::SemiColon); return Statement::IntDisable; }
+        
 if self.match_token(Token::Bnw) {
     if let Token::StringLiteral(s) = self.advance() {
         self.consume(Token::SemiColon);
@@ -626,5 +630,32 @@ fn parse_struct(&mut self) -> Statement {
                 std::process::exit(1);
             } 
         }
+
+fn int_handler_stmt(&mut self) -> Statement {
+    let name = if let Token::Identifier(s) = self.advance() { s } else {
+        eprintln!("[PARSER ERROR] Expected handler name after 'int'");
+        std::process::exit(1);
+    };
+    self.consume(Token::LBrace);
+    let mut body = Vec::new();
+    while !self.check(Token::RBrace) && !self.is_at_end() {
+        body.push(self.parse_statement());
+    }
+    self.consume(Token::RBrace);
+    Statement::IntHandler(name, body)
+}
+
+fn int_enable_stmt(&mut self) -> Statement {
+    self.consume(Token::LParen);
+    let vector_id = self.parse_expression();
+    self.consume(Token::Comma);
+    let handler_name = if let Token::Identifier(s) = self.advance() { s } else {
+        eprintln!("[PARSER ERROR] Expected handler name in int_enable");
+        std::process::exit(1);
+    };
+    self.consume(Token::RParen);
+    self.consume(Token::SemiColon);
+    Statement::IntEnable(vector_id, handler_name)
+}
     }
 

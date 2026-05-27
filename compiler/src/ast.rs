@@ -65,7 +65,10 @@ pub enum Statement {
     ArrayDefine(String, Vec<u64>, TypeKind),
     StringDefine(String, String),
     StructDefine(String, Vec<(String, TypeKind)>),
-    StructInstance(String, String), // (var_name, struct_type_name)
+    StructInstance(String, String), 
+    IntHandler(String, Vec<Statement>),
+    IntEnable(Expression, String),
+    IntDisable,
 }
 
 #[derive(Debug, Clone)]

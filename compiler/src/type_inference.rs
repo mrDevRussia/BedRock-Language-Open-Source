@@ -1,44 +1,20 @@
-// ================================================================
-// BedRock Language Compiler — Type Inference Engine
-// type_inference.rs
-// ================================================================
-//
-// الوظيفة:
-//   يستقبل الـ AST بعد الـ parsing (فيه TypeKind::Unknown)
-//   ويحلل كل variable وexpression ويحدد نوعها الحقيقي
-//   ويتحقق من صحة الأنواع قبل ما نبعت لـ codegen
-//
-// المراحل:
-//   1. Pre-scan   — تسجيل كل الـ functions وأنواعها
-//   2. Inference  — تحديد نوع كل variable من السياق
-//   3. Checking   — التحقق من صحة الأنواع (overflow, mismatch)
-//
-// ================================================================
-
 use crate::ast::{Statement, Expression, TypeKind};
 use std::collections::HashMap;
 
-// ================================================================
-// FuncSignature — توقيع الـ function
-// ================================================================
-
 #[derive(Debug, Clone)]
 struct FuncSignature {
-    /// أنواع الـ parameters بالترتيب
+
     params: Vec<TypeKind>,
-    /// نوع القيمة المرجعة
+ 
     return_type: TypeKind,
 }
 
-// ================================================================
-// TypeEnv — بيئة الأنواع في الـ scope الحالي
-// ================================================================
 
 #[derive(Debug, Clone)]
 struct TypeEnv {
-    /// نوع كل variable: اسمها → نوعها
+    
     vars: HashMap<String, TypeKind>,
-    /// توقيع كل function
+  
     funcs: HashMap<String, FuncSignature>,
 }
 
@@ -50,7 +26,6 @@ impl TypeEnv {
         }
     }
 
-    /// بييجي الـ child scope يرث كل حاجة من الـ parent
     fn child(&self) -> Self {
         TypeEnv {
             vars: self.vars.clone(),
@@ -75,17 +50,14 @@ impl TypeEnv {
     }
 }
 
-// ================================================================
-// TypeInferencer — المحرك الرئيسي
-// ================================================================
 
 pub struct TypeInferencer {
     env: TypeEnv,
-    /// اسم الـ function الحالية (لفحص الـ return type)
+  
     current_func: Option<String>,
-    /// عدد الـ warnings
+   
     warning_count: usize,
-    /// عدد الـ errors
+   
     error_count: usize,
 }
 
@@ -99,32 +71,22 @@ impl TypeInferencer {
         }
     }
 
-    // ============================================================
-    // نقطة الدخول الرئيسية
-    // ============================================================
 
-    /// يستقبل الـ AST ويرجعه بعد الـ inference
-    /// لو فيه errors بيوقف الـ compile
     pub fn run(&mut self, stmts: Vec<Statement>) -> Vec<Statement> {
-        // المرحلة 1: Pre-scan لتسجيل كل الـ functions
-        // عشان نحل مشكلة forward references
+    
         self.prescan_functions(&stmts);
 
-        // المرحلة 2: Inference على كل الـ statements
+   
         let result: Vec<Statement> = stmts
             .into_iter()
             .map(|s| self.infer_stmt(s))
             .collect();
 
-        // المرحلة 3: تقرير النتيجة
         self.report_summary();
 
         result
     }
 
-    // ============================================================
-    // المرحلة 1: Pre-scan
-    // ============================================================
 
     fn prescan_functions(&mut self, stmts: &[Statement]) {
         for stmt in stmts {
@@ -144,22 +106,17 @@ impl TypeInferencer {
         }
     }
 
-    // ============================================================
-    // المرحلة 2: Statement Inference
-    // ============================================================
 
     fn infer_stmt(&mut self, stmt: Statement) -> Statement {
         match stmt {
 
-            // --------------------------------------------------
-            // let x@u32 = expr;
-            // --------------------------------------------------
+   
             Statement::Let(name, expr, kind) => {
                 let inferred_expr = self.infer_expr(expr);
                 let expr_type = self.type_of_expr(&inferred_expr);
 
                 let final_kind = if kind == TypeKind::Unknown {
-                    // مفيش annotation — نستنتج من الـ expression
+                 
                     if expr_type == TypeKind::Unknown {
                         self.warn(&format!(
                             "variable '{}' has no type annotation, defaulting to u32", name
@@ -169,7 +126,7 @@ impl TypeInferencer {
                         expr_type.clone()
                     }
                 } else {
-                    // في annotation — نتحقق من التوافق
+                  
                     self.check_assignable(&expr_type, &kind, &name);
                     kind
                 };
@@ -178,9 +135,6 @@ impl TypeInferencer {
                 Statement::Let(name, inferred_expr, final_kind)
             }
 
-            // --------------------------------------------------
-            // root BASE@u32 = 0x80000000;
-            // --------------------------------------------------
             Statement::Root(name, expr, kind) => {
                 let inferred_expr = self.infer_expr(expr);
                 let expr_type = self.type_of_expr(&inferred_expr);
@@ -196,9 +150,6 @@ impl TypeInferencer {
                 Statement::Root(name, inferred_expr, final_kind)
             }
 
-            // --------------------------------------------------
-            // x = expr;
-            // --------------------------------------------------
             Statement::Assignment(name, expr) => {
                 let inferred_expr = self.infer_expr(expr);
                 let expr_type = self.type_of_expr(&inferred_expr);
@@ -218,9 +169,6 @@ impl TypeInferencer {
                 Statement::Assignment(name, inferred_expr)
             }
 
-            // --------------------------------------------------
-            // fn add(a@u32, b@u32)@u32 { ... }
-            // --------------------------------------------------
             Statement::FunctionDefine(name, params, body, return_type) => {
                 let final_return = if return_type == TypeKind::Unknown {
                     TypeKind::U32
@@ -245,32 +193,25 @@ impl TypeInferencer {
                     })
                     .collect();
 
-                // child scope للـ function body
                 let mut child_env = self.env.child();
                 for (pname, pkind) in &resolved_params {
                     child_env.set_var(pname, pkind.clone());
                 }
 
-                // احفظ الـ state وادخل الـ function scope
                 let saved_env = std::mem::replace(&mut self.env, child_env);
                 let saved_func = self.current_func.replace(name.clone());
 
-                // infer الـ body
                 let inferred_body: Vec<Statement> = body
                     .into_iter()
                     .map(|s| self.infer_stmt(s))
                     .collect();
 
-                // رجّع الـ state
                 self.env = saved_env;
                 self.current_func = saved_func;
 
                 Statement::FunctionDefine(name, resolved_params, inferred_body, final_return)
             }
 
-            // --------------------------------------------------
-            // return expr;
-            // --------------------------------------------------
             Statement::Return(maybe_expr) => {
                 let inferred = maybe_expr.map(|e| {
                     let ie = self.infer_expr(e);
@@ -297,9 +238,6 @@ impl TypeInferencer {
                 Statement::Return(inferred)
             }
 
-            // --------------------------------------------------
-            // if (cond) { ... } else { ... }
-            // --------------------------------------------------
             Statement::If(cond, then_body, else_body) => {
                 let inferred_cond = self.infer_expr(cond);
                 let inferred_then: Vec<Statement> = then_body
@@ -312,9 +250,6 @@ impl TypeInferencer {
                 Statement::If(inferred_cond, inferred_then, inferred_else)
             }
 
-            // --------------------------------------------------
-            // while (cond) { ... }
-            // --------------------------------------------------
             Statement::While(cond, body) => {
                 let inferred_cond = self.infer_expr(cond);
                 let inferred_body: Vec<Statement> = body
@@ -324,9 +259,6 @@ impl TypeInferencer {
                 Statement::While(inferred_cond, inferred_body)
             }
 
-            // --------------------------------------------------
-            // loop { ... }
-            // --------------------------------------------------
             Statement::Loop(body) => {
                 let inferred_body: Vec<Statement> = body
                     .into_iter()
@@ -335,31 +267,19 @@ impl TypeInferencer {
                 Statement::Loop(inferred_body)
             }
 
-            // --------------------------------------------------
-            // func_call(args);
-            // --------------------------------------------------
             Statement::Call(name, args) => {
                 let inferred_args = self.infer_call_args(&name, args);
                 Statement::Call(name, inferred_args)
             }
 
-            // --------------------------------------------------
-            // poke(addr, val);
-            // --------------------------------------------------
             Statement::Poke(addr, val) => {
                 Statement::Poke(self.infer_expr(addr), self.infer_expr(val))
             }
 
-            // --------------------------------------------------
-            // outb(port, val);
-            // --------------------------------------------------
             Statement::Outb(port, val) => {
                 Statement::Outb(self.infer_expr(port), self.infer_expr(val))
             }
 
-            // --------------------------------------------------
-            // let buf@u8 = [0, 1, 2];
-            // --------------------------------------------------
             Statement::ArrayDefine(name, vals, kind) => {
                 let final_kind = if kind == TypeKind::Unknown {
                     self.warn(&format!(
@@ -370,7 +290,6 @@ impl TypeInferencer {
                     kind.clone()
                 };
 
-                // تحقق من overflow لكل عنصر
                 for (i, &v) in vals.iter().enumerate() {
                     if v > final_kind.max_value() {
                         self.error(&format!(
@@ -384,9 +303,6 @@ impl TypeInferencer {
                 Statement::ArrayDefine(name, vals, final_kind)
             }
 
-            // --------------------------------------------------
-            // array[idx] = val;
-            // --------------------------------------------------
             Statement::ArrayAssign(name, idx, val) => {
                 Statement::ArrayAssign(
                     name,
@@ -395,7 +311,6 @@ impl TypeInferencer {
                 )
             }
 
-            // باقي الـ statements مش محتاجة inference
             Statement::StructDefine(_, _) => stmt,
             Statement::StructInstance(_, _) => stmt,
             Statement::Bnw(_) => stmt,
@@ -403,14 +318,10 @@ impl TypeInferencer {
         }
     }
 
-    // ============================================================
-    // Expression Inference
-    // ============================================================
 
     fn infer_expr(&mut self, expr: Expression) -> Expression {
         match expr {
 
-            // رقم ثابت — نحدد نوعه من حجمه أو من الـ annotation
             Expression::Number(n, kind) => {
                 let resolved = if kind == TypeKind::Unknown {
                     infer_number_type(n)
@@ -426,19 +337,16 @@ impl TypeInferencer {
                 Expression::Number(n, resolved)
             }
 
-            // variable — النوع من الـ env
             Expression::Variable(name) => {
                 Expression::Variable(name)
             }
 
-            // عملية حسابية
             Expression::BinaryOp(left, op, right) => {
                 let inferred_left  = self.infer_expr(*left);
                 let inferred_right = self.infer_expr(*right);
                 let left_type  = self.type_of_expr(&inferred_left);
                 let right_type = self.type_of_expr(&inferred_right);
 
-                // تحذير لو الأنواع مختلفة في عملية حسابية
                 if left_type != TypeKind::Unknown
                     && right_type != TypeKind::Unknown
                     && left_type != right_type
@@ -456,28 +364,23 @@ impl TypeInferencer {
                 )
             }
 
-            // function call كـ expression
             Expression::Call(name, args) => {
                 let inferred_args = self.infer_call_args(&name, args);
                 Expression::Call(name, inferred_args)
             }
 
-            // peek(addr) — بيرجع u32 دايماً
             Expression::Peek(addr) => {
                 Expression::Peek(Box::new(self.infer_expr(*addr)))
             }
 
-            // inb(port) — بيرجع u8
             Expression::Inb(port) => {
                 Expression::Inb(Box::new(self.infer_expr(*port)))
             }
 
-            // array[idx]
             Expression::ArrayAccess(name, idx) => {
                 Expression::ArrayAccess(name, Box::new(self.infer_expr(*idx)))
             }
 
-            // الحالات الجديدة مكانها الصحيح هنا:
             Expression::WaitKey => Expression::WaitKey,
 
             Expression::FieldAccess(var, field) => {
@@ -490,9 +393,6 @@ impl TypeInferencer {
         }
     }
 
-    // ============================================================
-    // Helper — infer args وتحقق من الأنواع
-    // ============================================================
 
     fn infer_call_args(&mut self, name: &str, args: Vec<Expression>) -> Vec<Expression> {
         let inferred: Vec<Expression> = args
@@ -525,9 +425,6 @@ impl TypeInferencer {
         inferred
     }
 
-    // ============================================================
-    // Helper — نوع الـ expression
-    // ============================================================
 
     fn type_of_expr(&self, expr: &Expression) -> TypeKind {
         match expr {
@@ -559,9 +456,6 @@ impl TypeInferencer {
         }
     }
 
-    // ============================================================
-    // Helper — فحص توافق نوعين
-    // ============================================================
 
     fn types_compatible(&self, from: &TypeKind, to: &TypeKind) -> bool {
         if from == to                           { return true; }
@@ -569,30 +463,27 @@ impl TypeInferencer {
         || *to   == TypeKind::Unknown           { return true; }
 
         match (from, to) {
-            // unsigned widening
+       
             (TypeKind::U8,  TypeKind::U16) |
             (TypeKind::U8,  TypeKind::U32) |
             (TypeKind::U8,  TypeKind::U64) |
             (TypeKind::U16, TypeKind::U32) |
             (TypeKind::U16, TypeKind::U64) |
             (TypeKind::U32, TypeKind::U64) => true,
-            // signed widening
+      
             (TypeKind::I8,  TypeKind::I16) |
             (TypeKind::I8,  TypeKind::I32) |
             (TypeKind::I8,  TypeKind::I64) |
             (TypeKind::I16, TypeKind::I32) |
             (TypeKind::I16, TypeKind::I64) |
             (TypeKind::I32, TypeKind::I64) => true,
-            // bool → unsigned
+    
             (TypeKind::Bool, TypeKind::U8)  |
             (TypeKind::Bool, TypeKind::U32) => true,
             _ => false,
         }
     }
 
-    // ============================================================
-    // Helper — فحص assignment
-    // ============================================================
 
     fn check_assignable(&mut self, from: &TypeKind, to: &TypeKind, context: &str) {
         if !self.types_compatible(from, to) {
@@ -603,9 +494,6 @@ impl TypeInferencer {
         }
     }
 
-    // ============================================================
-    // Reporting
-    // ============================================================
 
     fn warn(&mut self, msg: &str) {
         self.warning_count += 1;
@@ -630,9 +518,6 @@ impl TypeInferencer {
     }
 }
 
-// ================================================================
-// Helper — استنتاج نوع رقم من قيمته
-// ================================================================
 
 fn infer_number_type(_n: u64) -> TypeKind {
     TypeKind::Unknown

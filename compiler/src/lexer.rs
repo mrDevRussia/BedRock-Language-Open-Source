@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
 
-    Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include, Call, Struct, Dot, Bnw,
+    Fn, Let, Loop, While, Asm, If, Else, Return, Root, Inb, Outb, Break, Poke, Peek, Include, Call, Struct, Dot, Bnw, Int, IntEnable, IntDisable,
 
     U8, U16, U32, U64,
     I8, I16, I32, I64,
@@ -183,6 +183,10 @@ impl Lexer {
             "include" => Token::Include,
             "call"    => Token::Call,
             "struct" => Token::Struct,
+
+            "int"         => Token::Int,
+            "int_enable"  => Token::IntEnable,
+            "int_disable" => Token::IntDisable,
 
             "u8"      => Token::U8,
             "u16"     => Token::U16,
