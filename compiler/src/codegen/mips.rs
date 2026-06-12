@@ -1,15 +1,3 @@
-// ============================================================
-//  MIPS Backend  —  BedRock Compiler
-//
-//  يحتوي على نسختين:
-//
-//  1. MipsBackend  (IR-native, الافتراضي)
-//     IrModule → Register Allocation (Quantum) → MIPS binary
-//
-//  2. LegacyCodegen  (bridge فقط، يُفعَّل بـ --bridge)
-//     Vec<Statement> → MIPS binary  (الكود الأصلي بدون تعديل)
-// ============================================================
-
 use crate::ast::{Statement, Expression, TypeKind};
 use crate::ir::{IrModule, IrOp, Operand};
 use crate::codegen::{Backend, SourceMapEntry};
@@ -17,15 +5,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 const BASE_ADDR: u32 = 0x80000000;
 
-// MIPS physical registers المتاحة للـ allocator
-// $t0-$t7 = 8-15,  $t8-$t9 = 24-25,  $s0-$s7 = 16-23
-const PHYS_REGS: &[u32] = &[8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25];
 
-// ─────────────────────────────────────────────────────────
-//  VReg Allocator
-//  يحول أسماء VReg (%t0, %x, %counter…) لـ physical regs
-//  أو stack slots لو الـ pool اتمعّت
-// ─────────────────────────────────────────────────────────
+const PHYS_REGS: &[u32] = &[8,9,10,11,12,13,14,15,16,17,18,19,20,21,24,25];
+
 struct RegAlloc {
     /// VReg name → physical register number
     map:        HashMap<String, u32>,
@@ -99,6 +81,7 @@ enum AllocResult {
 // ─────────────────────────────────────────────────────────
 pub struct MipsBackend {
     base_addr:   u32,
+    little_endian: bool,
     code:        Vec<u32>,
     source_map:  Vec<SourceMapEntry>,
     current_line: usize,
@@ -134,12 +117,18 @@ impl MipsBackend {
             cf_left:      None,
             cf_right:     None,
             alloc:        RegAlloc::new(),
-            temp_pool:    VecDeque::from(vec![1u32, 3, 26, 27]),  // $at, $v1, $k0, $k1
+            temp_pool:    VecDeque::from(vec![1u32, 3, 26, 27]),
             next_data:    BASE_ADDR + 0x10000,
             data_symbols: HashMap::new(),
+            little_endian: false,
         }
-    }
+    }                      
 
+    pub fn new_le() -> Self {
+        let mut s = Self::new();
+        s.little_endian = true;
+        s
+    }
     // ── Emit helpers ─────────────────────────────────────
 
     fn emit(&mut self, instr: u32) {
@@ -331,15 +320,14 @@ impl MipsBackend {
                 self.emit(0x00000000);
             }
 
-            // ── MOV %dst, src ────────────────────────────
+
             IrOp::Mov => {
-                if instr.operands.len() < 2 { return; }
-                let dst = self.dest_reg(&instr.operands[0]);
-                let src = self.operand_to_reg(&instr.operands[1], 1);  // $at as temp
-                // ADDU dst, src, $0
-                self.emit(0x00000021 | (src << 21) | (0 << 16) | (dst << 11));
-                self.writeback_if_spilled(&instr.operands[0], dst);
-            }
+    if instr.operands.len() < 2 { return; }
+    let src = self.operand_to_reg(&instr.operands[1], 1);
+    let dst = self.dest_reg(&instr.operands[0]);
+    self.emit(0x00000021 | (src << 21) | (0 << 16) | (dst << 11));
+    self.writeback_if_spilled(&instr.operands[0], dst);
+}
 
             // ── DF @name; imm ────────────────────────────
             IrOp::Df => {
@@ -379,8 +367,7 @@ impl MipsBackend {
             }
 
             // ── Arithmetic: ADD SUB MUL DIV ──────────────
-            IrOp::Add | IrOp::Sub | IrOp::And | IrOp::Orr |
-            IrOp::Xor | IrOp::Shl | IrOp::Shr => {
+        IrOp::Add | IrOp::Sub | IrOp::And | IrOp::Orr | IrOp::Xor => {
                 if instr.operands.len() < 3 { return; }
                 let dst = self.dest_reg(&instr.operands[0]);
                 let l   = self.operand_to_reg(&instr.operands[1], 8);
@@ -391,8 +378,6 @@ impl MipsBackend {
                     IrOp::And => 0x00000024 | (l << 21) | (r << 16) | (dst << 11),
                     IrOp::Orr => 0x00000025 | (l << 21) | (r << 16) | (dst << 11),
                     IrOp::Xor => 0x00000026 | (l << 21) | (r << 16) | (dst << 11),
-                    IrOp::Shl => 0x00000004 | (r << 21) | (l << 16) | (dst << 11), // SLLV
-                    IrOp::Shr => 0x00000006 | (r << 21) | (l << 16) | (dst << 11), // SRLV
                     _ => unreachable!(),
                 };
                 self.emit(mips_instr);
@@ -419,6 +404,39 @@ impl MipsBackend {
                 self.writeback_if_spilled(&instr.operands[0], dst);
             }
 
+IrOp::Shl => {
+    if instr.operands.len() < 3 { return; }
+    let dst = self.dest_reg(&instr.operands[0]);
+    let l   = self.operand_to_reg(&instr.operands[1], 8);
+    let op2 = instr.operands[2].clone();
+    match op2 {
+        Operand::Imm(sa) => {
+            self.emit(0x00000000 | (l << 16) | (dst << 11) | ((sa as u32 & 31) << 6));
+        }
+        _ => {
+            let r = self.operand_to_reg(&op2, 9);
+            self.emit(0x00000004 | (r << 21) | (l << 16) | (dst << 11));
+        }
+    }
+    self.writeback_if_spilled(&instr.operands[0], dst);
+}
+
+IrOp::Shr => {
+    if instr.operands.len() < 3 { return; }
+    let dst = self.dest_reg(&instr.operands[0]);
+    let l   = self.operand_to_reg(&instr.operands[1], 8);
+    let op2 = instr.operands[2].clone();
+    match op2 {
+        Operand::Imm(sa) => {
+            self.emit(0x00000002 | (l << 16) | (dst << 11) | ((sa as u32 & 31) << 6));
+        }
+        _ => {
+            let r = self.operand_to_reg(&op2, 9);
+            self.emit(0x00000006 | (r << 21) | (l << 16) | (dst << 11));
+        }
+    }
+    self.writeback_if_spilled(&instr.operands[0], dst);
+}
             IrOp::Not => {
                 if instr.operands.len() < 2 { return; }
                 let dst = self.dest_reg(&instr.operands[0]);
@@ -630,7 +648,7 @@ impl Backend for MipsBackend {
         self.emit_module(module);
 
         self.code.iter()
-            .flat_map(|&w| w.to_be_bytes().to_vec())
+            .flat_map(|&w| if self.little_endian { w.to_le_bytes().to_vec() } else { w.to_be_bytes().to_vec() })
             .collect()
     }
 

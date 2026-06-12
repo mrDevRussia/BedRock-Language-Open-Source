@@ -21,10 +21,9 @@ pub struct SourceMapEntry {
 //  كل معمارية تطبق ده
 // ─────────────────────────────────────────────────────────
 pub trait Backend {
-    /// يأخذ IrModule ويرجع binary bytes
+
     fn compile(&mut self, module: &IrModule) -> Vec<u8>;
 
-    /// Source map — اختياري، الـ stubs ترجع vec فاضي
     fn get_source_map(&self) -> Vec<SourceMapEntry> {
         Vec::new()
     }
@@ -36,6 +35,7 @@ pub trait Backend {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Mips,
+    MipsLe,  
     Arm,
     Ir,
 }
@@ -43,14 +43,12 @@ pub enum Target {
 impl Target {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "mips" => Target::Mips,
-            "arm"  => Target::Arm,
-            "ir"   => Target::Ir,
-            other  => {
-                eprintln!(
-                    "[TARGET ERROR] Unknown target '{}'\n  Available: mips, arm, ir\n  Defaulting to: mips",
-                    other
-                );
+            "mips" | "mips-be" => Target::Mips,
+            "mips-le"          => Target::MipsLe,  
+            "arm"              => Target::Arm,
+            "ir"               => Target::Ir,
+            other => {
+                eprintln!("[TARGET ERROR] Unknown target '{}'\n  Available: mips-be, mips-le, arm, ir\n  Defaulting to: mips-be", other);
                 Target::Mips
             }
         }
@@ -58,28 +56,27 @@ impl Target {
 
     pub fn name(&self) -> &str {
         match self {
-            Target::Mips => "mips",
-            Target::Arm  => "arm",
-            Target::Ir   => "ir",
+            Target::Mips   => "mips-be",
+            Target::MipsLe => "mips-le", 
+            Target::Arm    => "arm",
+            Target::Ir     => "ir",
         }
     }
 
     pub fn output_extension(&self) -> &str {
         match self {
-            Target::Mips => "bin",
-            Target::Arm  => "bin",
-            Target::Ir   => "ir",
+            Target::Mips | Target::MipsLe => "bin",
+            Target::Arm                   => "bin",
+            Target::Ir                    => "ir",
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────
-//  Factory — يرجع الـ backend الصح
-// ─────────────────────────────────────────────────────────
 pub fn select_backend(target: &Target) -> Box<dyn Backend> {
     match target {
-        Target::Mips => Box::new(mips::MipsBackend::new()),
-        Target::Arm  => Box::new(arm::ArmBackend::new()),
-        Target::Ir   => Box::new(ir_emit::IrEmitBackend::new()),
+        Target::Mips   => Box::new(mips::MipsBackend::new()),
+        Target::MipsLe => Box::new(mips::MipsBackend::new_le()),
+        Target::Arm    => Box::new(arm::ArmBackend::new()),
+        Target::Ir     => Box::new(ir_emit::IrEmitBackend::new()),
     }
 }

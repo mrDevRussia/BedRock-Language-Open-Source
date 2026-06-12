@@ -131,7 +131,7 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    if use_bridge && target != codegen::Target::Mips {
+    if use_bridge && target != codegen::Target::Mips && target != codegen::Target::MipsLe {
         eprintln!("[ERROR] --bridge is only available with --target mips");
         std::process::exit(1);
     }

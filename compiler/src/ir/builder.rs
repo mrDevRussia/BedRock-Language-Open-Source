@@ -60,7 +60,8 @@ impl IrBuilder {
 
             Statement::Assignment(name, expr) => {
                 let src = self.lower_expr(expr, out);
-                out.push(IrInstr::mov(Operand::VReg(name.clone()), src));
+                let safe_name = name.replace('.', "__");
+                out.push(IrInstr::mov(Operand::VReg(safe_name), src));
             }
 
             Statement::ArrayAssign(name, idx_expr, val_expr) => {
@@ -209,21 +210,11 @@ impl IrBuilder {
                 out.push(IrInstr::new(IrOp::IntDisable, vec![]));
             }
 
-            Statement::StructDefine(_, _) => {}
+         
 
-            Statement::StructInstance(name, type_name) => {
-                let layout = self.struct_layouts.get(type_name).cloned().unwrap_or_default();
-                for (field, offset) in &layout {
-                    let field_reg = format!("{}__{}", name, field);
-                    out.push(IrInstr::new(
-                        IrOp::Const,
-                        vec![
-                            Operand::VReg(field_reg),
-                            Operand::Imm(*offset as u64),
-                        ],
-                    ));
-                }
-            }
+           Statement::StructDefine(_, _) => {}
+
+            Statement::StructInstance(_, _) => {}
 
             Statement::Asm(raw) => {
                 out.push(IrInstr::new(IrOp::Asm, vec![Operand::Str(raw.clone())]));
@@ -298,9 +289,9 @@ impl IrBuilder {
                 result
             }
 
-            Expression::FieldAccess(var, field) => {
+Expression::FieldAccess(var, field) => {
                 let dest = self.fresh_vreg();
-                out.push(IrInstr::get(
+                out.push(IrInstr::mov(
                     dest.clone(),
                     Operand::VReg(format!("{}__{}", var, field)),
                 ));

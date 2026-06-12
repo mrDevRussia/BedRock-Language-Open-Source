@@ -231,11 +231,11 @@ impl Verifier {
                     }
                     self.mark_written(name);
                     self.mark_used(name);
-                } else {
-                    self.errors.push(format!(
-                        "[VERIFIER] Assignment to undefined variable '{}'", name
-                    ));
-                }
+                } else if !name.contains('.') {
+    self.errors.push(format!(
+        "[VERIFIER] Assignment to undefined variable '{}'", name
+    ));
+}
             }
 
             Statement::ArrayAssign(name, idx, val) => {
@@ -442,7 +442,13 @@ impl Verifier {
 
             Statement::Asm(_) => {}
 
-            _ => {}
+Statement::StructDefine(_, _) => {}
+
+Statement::StructInstance(name, _) => {
+    self.define_var(name, TypeKind::Unknown, false, false);
+}
+
+_ => {}
         }
     }
 
