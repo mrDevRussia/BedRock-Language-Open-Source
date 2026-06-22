@@ -44,7 +44,7 @@
 
 
 
-        fn parse_type(&mut self) -> TypeKind {
+   fn parse_type(&mut self) -> TypeKind {
     match self.peek() {
         Token::U8  => { self.advance(); TypeKind::U8  }
         Token::U16 => { self.advance(); TypeKind::U16 }
@@ -98,6 +98,19 @@
         if self.match_token(Token::Int)        { return self.int_handler_stmt(); }
         if self.match_token(Token::IntEnable)  { return self.int_enable_stmt(); }
         if self.match_token(Token::IntDisable) { self.consume(Token::SemiColon); return Statement::IntDisable; }
+
+        if self.match_token(Token::SaveCtx) {
+            if let Token::Identifier(name) = self.advance() {
+                self.consume(Token::SemiColon);
+                return Statement::SaveContext(name);
+            }
+        }
+        if self.match_token(Token::RestoreCtx) {
+            if let Token::Identifier(name) = self.advance() {
+                self.consume(Token::SemiColon);
+                return Statement::RestoreContext(name);
+            }
+        }
         
 if self.match_token(Token::Bnw) {
     if let Token::StringLiteral(s) = self.advance() {
@@ -337,7 +350,9 @@ if self.match_token(Token::Bnw) {
     }
     expr
 }
-        fn primary(&mut self) -> Expression {
+
+
+    fn primary(&mut self) -> Expression {
         match self.peek() {
    
             Token::LParen => {
@@ -402,6 +417,16 @@ if self.match_token(Token::Bnw) {
         self.consume(Token::RParen);
         Expression::Inb(Box::new(port))
     }
+
+Token::Ampersand => {
+                self.advance();
+                if let Token::Identifier(name) = self.advance() {
+                    Expression::AddressOf(name)
+                } else {
+                    eprintln!("[PARSER ERROR] Expected function name after '&'");
+                    std::process::exit(1);
+                }
+            }
 
             _ => {
                 eprintln!("[PARSER ERROR] Unexpected token in expression: {:?}", self.peek());

@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 const BASE_ADDR: u32 = 0x80000000;
 
 
-const PHYS_REGS: &[u32] = &[8,9,10,11,12,13,14,15,16,17,18,19,20,21,24,25];
+const PHYS_REGS: &[u32] = &[10,11,12,13,14,15,16,17,18,19,20,21,24,25];
 
 struct RegAlloc {
     /// VReg name → physical register number
@@ -101,8 +101,9 @@ pub struct MipsBackend {
     temp_pool:   VecDeque<u32>,
 
     // Data section
-    next_data:   u32,
+next_data:   u32,
     data_symbols: HashMap<String, u32>,
+    root_vars:   std::collections::HashSet<String>,
 }
 
 impl MipsBackend {
@@ -120,6 +121,7 @@ impl MipsBackend {
             temp_pool:    VecDeque::from(vec![1u32, 3, 26, 27]),
             next_data:    BASE_ADDR + 0x10000,
             data_symbols: HashMap::new(),
+            root_vars:    std::collections::HashSet::new(),
             little_endian: false,
         }
     }                      
@@ -172,10 +174,15 @@ impl MipsBackend {
     fn operand_to_reg(&mut self, op: &Operand, temp_reg: u32) -> u32 {
         match op {
             Operand::VReg(name) => {
+                if self.root_vars.contains(name) {
+                    let addr = *self.data_symbols.get(name).unwrap_or(&0);
+                    self.emit_li(temp_reg, addr);
+                    self.emit(0x8C000000 | (temp_reg << 21) | (temp_reg << 16));
+                    return temp_reg;
+                }
                 match self.alloc.alloc(name) {
                     AllocResult::Reg(r) => r,
                     AllocResult::Spill(off) => {
-                        // load from stack into temp
                         self.emit(0x8FA00000 | (temp_reg << 16) | (off & 0xFFFF));
                         temp_reg
                     }
@@ -186,8 +193,13 @@ impl MipsBackend {
                 temp_reg
             }
             Operand::Label(name) => {
-                // label → address
-                let addr = *self.data_symbols.get(name).unwrap_or(&0);
+                let addr = if let Some(&data_addr) = self.data_symbols.get(name) {
+                    data_addr
+                } else if let Some(&code_idx) = self.labels.get(name) {
+                    self.base_addr + (code_idx as u32 * 4)
+                } else {
+                    0
+                };
                 self.emit_li(temp_reg, addr);
                 temp_reg
             }
@@ -198,22 +210,32 @@ impl MipsBackend {
         }
     }
 
-    // ── dest VReg → physical reg (يحجز لو لزم) ──────────
-    fn dest_reg(&mut self, op: &Operand) -> u32 {
+  fn dest_reg(&mut self, op: &Operand) -> u32 {
         match op {
             Operand::VReg(name) => {
+                if self.root_vars.contains(name) {
+                    return 1;
+                }
                 match self.alloc.alloc(name) {
                     AllocResult::Reg(r) => r,
-                    AllocResult::Spill(_) => 1,  // $at كـ temp
+                    AllocResult::Spill(_) => 1,
                 }
             }
             _ => 1,
         }
     }
 
-    // اكتب النتيجة لو الـ dest كان spilled
-    fn writeback_if_spilled(&mut self, op: &Operand, result_reg: u32) {
+   fn writeback_if_spilled(&mut self, op: &Operand, result_reg: u32) {
         if let Operand::VReg(name) = op {
+            if self.root_vars.contains(name) {
+                let addr = *self.data_symbols.get(name).unwrap_or(&0);
+                let addr_reg = 9u32;
+                if addr_reg != result_reg {
+                    self.emit_li(addr_reg, addr);
+                    self.emit(0xAC000000 | (addr_reg << 21) | (result_reg << 16));
+                }
+                return;
+            }
             if let Some(&off) = self.alloc.spilled.get(name) {
                 self.emit(0xAFA00000 | (result_reg << 16) | (off & 0xFFFF));
             }
@@ -240,21 +262,29 @@ impl MipsBackend {
                 self.source_map[site].instruction = self.code[site];
             }
         }
-        // لو اللابل لسه مش موجود → هيتعمل patch بعدين في resolve_patches
+
     }
 
-    fn resolve_patches(&mut self) {
+   fn resolve_patches(&mut self) {
         let patches = self.label_patches.clone();
         for (site, label) in &patches {
             if let Some(&target_idx) = self.labels.get(label.as_str()) {
+                let target_addr = self.base_addr + (target_idx as u32 * 4);
                 let instr = self.code[*site];
-                // J-type لو بيبدأ بـ 0x08 أو 0x0C
                 let opcode = instr >> 26;
                 if opcode == 2 || opcode == 3 {
                     let t = self.get_jump_target(target_idx);
                     self.code[*site] = (instr & 0xFC000000) | t;
+                } else if opcode == 0x0F {
+                    let hi = (target_addr >> 16) & 0xFFFF;
+                    let lo = target_addr & 0xFFFF;
+                    self.code[*site] = (instr & 0xFFFF0000) | hi;
+                    if *site + 1 < self.code.len() {
+                        let next_instr = self.code[*site + 1];
+                        self.code[*site + 1] = (next_instr & 0xFFFF0000) | lo;
+                        self.source_map[*site + 1].instruction = self.code[*site + 1];
+                    }
                 } else {
-                    // branch
                     let offset = (target_idx as i32 - *site as i32 - 1) as i16;
                     self.code[*site] = (instr & 0xFFFF0000) | (offset as u16) as u32;
                 }
@@ -284,6 +314,31 @@ impl MipsBackend {
     // ── Main IR emission loop ─────────────────────────────
 
     fn emit_module(&mut self, module: &IrModule) {
+
+let mut seen_once: HashMap<String, u32> = HashMap::new();
+        let mut conflicted: std::collections::HashSet<String> = std::collections::HashSet::new();
+       for instr in &module.instructions {
+           if instr.op == IrOp::Rdf {
+                if let Operand::VReg(name) = &instr.operands[0] {
+                    self.root_vars.insert(name.clone());
+                    if let Operand::Imm(val) = &instr.operands[1] {
+                        self.data_symbols.insert(name.clone(), *val as u32);
+                        eprintln!("[DEBUG] Rdf registered: {} = {:#x}", name, *val as u32);
+                    } else {
+                        let addr = self.next_data;
+                        self.data_symbols.insert(name.clone(), addr);
+                        self.next_data += 4;
+                    }
+                }
+            }
+        
+        }
+        for (name, val) in &seen_once {
+            if !conflicted.contains(name) {
+                self.data_symbols.insert(name.clone(), *val);
+                self.root_vars.insert(name.clone());
+            }
+        }
         // Pass 1: سجّل كل الـ MK labels الموجودة
         for (i, instr) in module.instructions.iter().enumerate() {
             if instr.op == IrOp::Mk {
@@ -321,13 +376,34 @@ impl MipsBackend {
             }
 
 
-            IrOp::Mov => {
+     IrOp::Mov => {
     if instr.operands.len() < 2 { return; }
+    if let Operand::VReg(name) = &instr.operands[0] {
+        if self.root_vars.contains(name) {
+            let addr = *self.data_symbols.get(name).unwrap_or(&0);
+            let src = self.operand_to_reg(&instr.operands[1], 1);
+            let addr_reg = 9u32;
+            self.emit_li(addr_reg, addr);
+            self.emit(0xAC000000 | (addr_reg << 21) | (src << 16));
+            return;
+        }
+    }
     let src = self.operand_to_reg(&instr.operands[1], 1);
     let dst = self.dest_reg(&instr.operands[0]);
     self.emit(0x00000021 | (src << 21) | (0 << 16) | (dst << 11));
     self.writeback_if_spilled(&instr.operands[0], dst);
 }
+IrOp::Rdf => {
+                if instr.operands.len() < 2 { return; }
+                if let Operand::VReg(name) = &instr.operands[0] {
+                    let addr = *self.data_symbols.get(name).unwrap_or(&0);
+                    let src = self.operand_to_reg(&instr.operands[1], 1);
+                    let addr_reg = 9u32;
+                    self.emit_li(addr_reg, addr);
+                    self.emit(0xAC000000 | (addr_reg << 21) | (src << 16));
+                }
+            }
+    
 
             // ── DF @name; imm ────────────────────────────
             IrOp::Df => {
@@ -515,51 +591,48 @@ IrOp::Shr => {
             }
 
             // ── PSH src ──────────────────────────────────
-            IrOp::Psh => {
-                if instr.operands.is_empty() { return; }
-                let src = self.operand_to_reg(&instr.operands[0], 8);
-                // ADDIU $sp, $sp, -4
-                self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | ((-4i16) as u16) as u32);
-                // SW src, 0($sp)
-                self.emit(0xAC000000 | (29 << 21) | (src << 16));
-            }
-
+           IrOp::Psh => {
+    if instr.operands.is_empty() { return; }
+    let src = self.operand_to_reg(&instr.operands[0], 8);
+   
+    self.emit((0x09u32 << 26) | (28u32 << 21) | (28u32 << 16) | (((-4i16) as u16) as u32));
+  
+    self.emit(0xAF800000 | (28 << 21) | (src << 16));
+}
             // ── POP %dst ─────────────────────────────────
-            IrOp::Pop => {
-                if instr.operands.is_empty() { return; }
-                let dst = self.dest_reg(&instr.operands[0]);
-                // LW dst, 0($sp)
-                self.emit(0x8C000000 | (29 << 21) | (dst << 16));
-                // ADDIU $sp, $sp, 4
-                self.emit(0x27BD0000 | (29 << 21) | (29 << 16) | 4);
-                self.writeback_if_spilled(&instr.operands[0], dst);
-            }
+        IrOp::Pop => {
+    if instr.operands.is_empty() { return; }
+    let dst = self.dest_reg(&instr.operands[0]);
+
+    self.emit(0x8F800000 | (28 << 21) | (dst << 16));
+
+    self.emit((0x09u32 << 26) | (28u32 << 21) | (28u32 << 16) | 4u32);
+    self.writeback_if_spilled(&instr.operands[0], dst);
+}
 
             // ── CAL @label ───────────────────────────────
-            IrOp::Cal => {
+           IrOp::Cal => {
                 if let Some(Operand::Label(label)) = instr.operands.first() {
                     if label.is_empty() { return; }
+                    self.emit(0x00000021 | (31 << 21) | (0 << 16) | (26 << 11));
                     let site = self.code.len();
                     self.emit(0x0C000000);
-                    self.emit(0x00000000);  // delay slot
+                    self.emit(0x00000000);
                     self.label_patches.push((site, label.clone()));
+                    self.emit(0x00000021 | (26 << 21) | (0 << 16) | (31 << 11));
                 }
             }
-
             // ── RET [src] ────────────────────────────────
             IrOp::Ret => {
                 if let Some(op) = instr.operands.first() {
-                    // ضع القيمة في $v0 (reg 2)
                     let src = self.operand_to_reg(op, 2);
                     if src != 2 {
                         self.emit(0x00000021 | (src << 21) | (0 << 16) | (2 << 11));
                     }
                 }
-                // JR $ra
                 self.emit(0x03E00008);
-                self.emit(0x00000000);  // delay slot
+                self.emit(0x00000000);
             }
-
             // ── INT imm, @handler ────────────────────────
             IrOp::Int => {
                 if instr.operands.len() < 2 { return; }
@@ -616,41 +689,84 @@ IrOp::Const => {
     self.emit(0x00000021 | (val << 21) | (0 << 16) | (dst << 11));
     self.writeback_if_spilled(&instr.operands[0], dst);
 }
+
 IrOp::Bnw => {}
+
+
 IrOp::IntDisable => {
     self.emit(0x400C8000);
     self.emit(0x310CFFFE);
     self.emit(0x410C6000);
 }
 
+IrOp::SaveCtx => {
+                if let Some(Operand::Label(name)) = instr.operands.first() {
+                    let base = *self.data_symbols.get(name).unwrap_or(&self.next_data);
+                    let regs: &[u32] = &[16,17,18,19,20,21,22,23,31,29];
+                    for (i, &r) in regs.iter().enumerate() {
+                        let addr = base + (i as u32 * 4);
+                        self.emit_li(9, addr);
+                        self.emit(0xAC000000 | (9 << 21) | (r << 16));
+                    }
+                }
+            }
 
+            IrOp::RestoreCtx => {
+                if let Some(Operand::Label(name)) = instr.operands.first() {
+                    let base = *self.data_symbols.get(name).unwrap_or(&self.next_data);
+                    let regs: &[u32] = &[16,17,18,19,20,21,22,23,31,29];
+                    for (i, &r) in regs.iter().enumerate() {
+                        let addr = base + (i as u32 * 4);
+                        self.emit_li(9, addr);
+                        self.emit(0x8C000000 | (9 << 21) | (r << 16));
+                    }
+                    self.emit(0x03E00008);
+                    self.emit(0x00000000);
+                }
+            }
 
-            // ── Comment / NOP ────────────────────────────
             IrOp::Comment => {}
         }
     }
 }
 
 impl Backend for MipsBackend {
-    fn compile(&mut self, module: &IrModule) -> Vec<u8> {
-        self.code.clear();
-        self.source_map.clear();
-        self.labels.clear();
-        self.label_patches.clear();
-        self.alloc.reset();
-        self.cf_left  = None;
-        self.cf_right = None;
+fn compile(&mut self, module: &IrModule) -> Vec<u8> {
+    self.code.clear();
+    self.source_map.clear();
+    self.labels.clear();
+    self.label_patches.clear();
+    self.alloc.reset();
+    self.emit_li(28, BASE_ADDR + 0x30000);
+    self.cf_left  = None;
+    self.cf_right = None;
 
-        // Prologue: NOP + $sp setup
-        self.emit(0x00000000);
-        self.emit_li(29, BASE_ADDR + 0x20000);  // SP
 
-        self.emit_module(module);
-
-        self.code.iter()
-            .flat_map(|&w| if self.little_endian { w.to_le_bytes().to_vec() } else { w.to_be_bytes().to_vec() })
-            .collect()
+    for instr in &module.instructions {
+        if instr.op == crate::ir::IrOp::Mov {
+            if let (Some(crate::ir::Operand::VReg(name)), Some(crate::ir::Operand::Imm(val))) =
+                (instr.operands.get(0), instr.operands.get(1))
+            {
+                match name.as_str() {
+                    "BASE"  => { self.base_addr  = *val as u32; }
+                    "STACK" => { self.next_data  = *val as u32; }
+                    "DATA"  => { self.next_data  = *val as u32; }
+                    _ => {}
+                }
+            }
+        }
     }
+
+    // Prologue
+    self.emit(0x00000000);
+    self.emit_li(29, self.base_addr + 0x20000);  // SP default لو مفيش STACK
+
+    self.emit_module(module);
+
+    self.code.iter()
+        .flat_map(|&w| if self.little_endian { w.to_le_bytes().to_vec() } else { w.to_be_bytes().to_vec() })
+        .collect()
+}
 
     fn get_source_map(&self) -> Vec<SourceMapEntry> {
         self.source_map.clone()
@@ -1095,6 +1211,15 @@ impl LegacyCodegen {
                 if self.in_function { if let Some(&bo)=self.local_vars.get(vn) { self.emit(0xAFA00000|(vr<<16)|((bo+off)&0xFFFF)); } }
                 else { let ba=*self.symbols.get(vn).unwrap_or(&0x80010000); let ar=self.alloc_reg(); self.emit_li(ar,ba+off); self.emit(0xAC000000|(ar<<21)|(vr<<16)); self.free_reg(ar); }
                 self.free_reg(vr);
+            }
+           Expression::AddressOf(name) => {
+                if let Some(&idx) = self.functions.get(name) {
+                    let abs = self.base_addr + (idx as u32 * 4);
+                    self.emit_li(dest, abs);
+                } else {
+                    eprintln!("[BRIDGE ERROR] '&{}' refers to undefined function", name);
+                    std::process::exit(1);
+                }
             }
         }
     }

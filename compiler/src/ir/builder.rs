@@ -18,24 +18,63 @@ impl IrBuilder {
         }
     }
 
-    pub fn build(&mut self, program: Vec<Statement>) -> IrModule {
-        let mut module = IrModule::new();
-        for stmt in &program {
-            if let Statement::StructDefine(name, fields) = stmt {
-                let layout: Vec<(String, usize)> = fields
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (fname, _))| (fname.clone(), i * 4))
-                    .collect();
-                self.struct_layouts.insert(name.clone(), layout);
+   pub fn build(&mut self, program: Vec<Statement>) -> IrModule {
+    let mut module = IrModule::new();
+
+    for stmt in &program {
+        if let Statement::StructDefine(name, fields) = stmt {
+            let layout: Vec<(String, usize)> = fields
+                .iter()
+                .enumerate()
+                .map(|(i, (fname, _))| (fname.clone(), i * 4))
+                .collect();
+            self.struct_layouts.insert(name.clone(), layout);
+        }
+    }
+
+    let mut header = Vec::new();
+    let mut funcs  = Vec::new();
+    let mut entry  = Vec::new();
+
+    for stmt in program {
+        match &stmt {
+            Statement::FunctionDefine(_, _, _, _) | Statement::IntHandler(_, _) => {
+                funcs.push(stmt);
+            }
+            Statement::Let(_, _, _)
+            | Statement::Root(_, _, _)
+            | Statement::ArrayDefine(_, _, _)
+            | Statement::StringDefine(_, _)
+            | Statement::StructDefine(_, _)
+            | Statement::StructInstance(_, _) => {
+                header.push(stmt);
+            }
+            _ => {
+                entry.push(stmt);
             }
         }
-        for stmt in program {
-            self.lower_stmt(&stmt, &mut module);
-        }
-        module.push(IrInstr::halt());
-        module
     }
+
+    for stmt in &header {
+        self.lower_stmt(stmt, &mut module);
+    }
+
+    let main_label = self.fresh_label("main_entry");
+    module.push(IrInstr::go(&main_label));
+
+    for stmt in &funcs {
+        self.lower_stmt(stmt, &mut module);
+    }
+
+    module.push(IrInstr::mk(&main_label));
+
+    for stmt in &entry {
+        self.lower_stmt(stmt, &mut module);
+    }
+
+    module.push(IrInstr::halt());
+    module
+}
 
     fn fresh_vreg(&mut self) -> Operand {
         let n = self.vreg_counter;
@@ -52,12 +91,15 @@ impl IrBuilder {
     fn lower_stmt(&mut self, stmt: &Statement, out: &mut IrModule) {
         match stmt {
 
-            Statement::Let(name, expr, _) |
-            Statement::Root(name, expr, _) => {
+            Statement::Let(name, expr, _) => {
                 let src = self.lower_expr(expr, out);
                 out.push(IrInstr::mov(Operand::VReg(name.clone()), src));
             }
 
+            Statement::Root(name, expr, _) => {
+                let src = self.lower_expr(expr, out);
+                out.push(IrInstr::new(IrOp::Rdf, vec![Operand::VReg(name.clone()), src]));
+            }
             Statement::Assignment(name, expr) => {
                 let src = self.lower_expr(expr, out);
                 let safe_name = name.replace('.', "__");
@@ -97,7 +139,7 @@ impl IrBuilder {
                 out.push(IrInstr::new(IrOp::Outb, vec![val, port]));
             }
 
-            Statement::FunctionDefine(name, params, body, _) => {
+           Statement::FunctionDefine(name, params, body, _) => {
                 out.push(IrInstr::mk(name));
                 for (pname, _) in params {
                     out.push(IrInstr::pop(Operand::VReg(pname.clone())));
@@ -223,6 +265,12 @@ impl IrBuilder {
             Statement::Bnw(msg) => {
                 out.push(IrInstr::new(IrOp::Bnw, vec![Operand::Str(msg.clone())]));
             }
+            Statement::SaveContext(name) => {
+                out.push(IrInstr::save_ctx(name));
+            }
+            Statement::RestoreContext(name) => {
+                out.push(IrInstr::restore_ctx(name));
+            }
         }
     }
 
@@ -288,8 +336,7 @@ impl IrBuilder {
                 out.push(IrInstr::pop(result.clone()));
                 result
             }
-
-Expression::FieldAccess(var, field) => {
+           Expression::FieldAccess(var, field) => {
                 let dest = self.fresh_vreg();
                 out.push(IrInstr::mov(
                     dest.clone(),
@@ -303,6 +350,9 @@ Expression::FieldAccess(var, field) => {
                 let dest = Operand::VReg(format!("{}__{}", var, field));
                 out.push(IrInstr::mov(dest.clone(), val));
                 dest
+            }
+            Expression::AddressOf(name) => {
+                Operand::Label(name.clone())
             }
 
             Expression::WaitKey => {

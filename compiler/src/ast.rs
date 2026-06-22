@@ -69,6 +69,8 @@ pub enum Statement {
     IntHandler(String, Vec<Statement>),
     IntEnable(Expression, String),
     IntDisable,
+    SaveContext(String),
+    RestoreContext(String),
 }
 
 #[derive(Debug, Clone)]
@@ -83,4 +85,5 @@ pub enum Expression {
     ArrayAccess(String, Box<Expression>),
     FieldAccess(String, String),
     FieldAssign(String, String, Box<Expression>),
+    AddressOf(String),
 }

@@ -9,7 +9,7 @@ pub enum IrOp {
     Cf, Jf, Go,
     Psh, Pop, Get, Df,
     Int, Inb, Outb, Poke, Peek,
-Const, Bnw, IntDisable,
+Const, Bnw, IntDisable, SaveCtx, RestoreCtx, Rdf,
 Comment,
 }
 
@@ -76,6 +76,12 @@ impl IrInstr {
 
     pub fn int(vector: u64, handler: &str) -> Self {
         IrInstr::new(IrOp::Int, vec![Operand::Imm(vector), Operand::Label(handler.to_string())])
+    }
+    pub fn save_ctx(name: &str) -> Self {
+        IrInstr::new(IrOp::SaveCtx, vec![Operand::Label(name.to_string())])
+    }
+    pub fn restore_ctx(name: &str) -> Self {
+        IrInstr::new(IrOp::RestoreCtx, vec![Operand::Label(name.to_string())])
     }
 }
 

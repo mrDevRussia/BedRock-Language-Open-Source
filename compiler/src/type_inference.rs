@@ -340,6 +340,9 @@ impl TypeInferencer {
             Expression::Variable(name) => {
                 Expression::Variable(name)
             }
+            Expression::AddressOf(name) => {
+                Expression::AddressOf(name)
+            }
 
             Expression::BinaryOp(left, op, right) => {
                 let inferred_left  = self.infer_expr(*left);
@@ -442,6 +445,7 @@ impl TypeInferencer {
                     }
                 }
             }
+            Expression::AddressOf(_) => TypeKind::U32,
             Expression::Peek(_)             => TypeKind::Unknown,
             Expression::Inb(_)              => TypeKind::U8,
             Expression::Call(name, _)       => {

@@ -559,6 +559,17 @@ _ => {}
                 self.check_expr(val);
             }
 
+              
+              Expression::AddressOf(name) => {
+                if !self.funcs.contains_key(name.as_str()) {
+                    self.errors.push(format!(
+                        "[VERIFIER] '&{}' refers to undefined function", name
+                    ));
+                } else if let Some(f) = self.funcs.get_mut(name) {
+                    f.used = true;
+                }
+            }
+
             _ => {}
         }
     }
