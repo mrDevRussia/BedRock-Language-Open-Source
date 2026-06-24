@@ -313,32 +313,38 @@ impl MipsBackend {
 
     // ── Main IR emission loop ─────────────────────────────
 
-    fn emit_module(&mut self, module: &IrModule) {
+   fn emit_module(&mut self, module: &IrModule) {
 
-let mut seen_once: HashMap<String, u32> = HashMap::new();
-        let mut conflicted: std::collections::HashSet<String> = std::collections::HashSet::new();
-       for instr in &module.instructions {
-           if instr.op == IrOp::Rdf {
+        // Pre-pass: اجمع كل الأسماء اللي بتُستخدم كـ Label
+        let mut used_as_label: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for instr in &module.instructions {
+            for op in &instr.operands {
+                if let Operand::Label(name) = op {
+                    used_as_label.insert(name.clone());
+                }
+            }
+        }
+
+        // Pre-pass: سجّل كل Rdf
+        for instr in &module.instructions {
+            if instr.op == IrOp::Rdf {
                 if let Operand::VReg(name) = &instr.operands[0] {
-                    self.root_vars.insert(name.clone());
-                    if let Operand::Imm(val) = &instr.operands[1] {
-                        self.data_symbols.insert(name.clone(), *val as u32);
-                        eprintln!("[DEBUG] Rdf registered: {} = {:#x}", name, *val as u32);
-                    } else {
-                        let addr = self.next_data;
-                        self.data_symbols.insert(name.clone(), addr);
-                        self.next_data += 4;
+                    if !self.data_symbols.contains_key(name) {
+                        self.root_vars.insert(name.clone());
+                        if used_as_label.contains(name) {
+                            if let Operand::Imm(val) = &instr.operands[1] {
+                                self.data_symbols.insert(name.clone(), *val as u32);
+                            }
+                        } else {
+                            let addr = self.next_data;
+                            self.data_symbols.insert(name.clone(), addr);
+                            self.next_data += 4;
+                        }
                     }
                 }
             }
-        
         }
-        for (name, val) in &seen_once {
-            if !conflicted.contains(name) {
-                self.data_symbols.insert(name.clone(), *val);
-                self.root_vars.insert(name.clone());
-            }
-        }
+
         // Pass 1: سجّل كل الـ MK labels الموجودة
         for (i, instr) in module.instructions.iter().enumerate() {
             if instr.op == IrOp::Mk {
@@ -591,23 +597,20 @@ IrOp::Shr => {
             }
 
             // ── PSH src ──────────────────────────────────
-           IrOp::Psh => {
+          IrOp::Psh => {
     if instr.operands.is_empty() { return; }
     let src = self.operand_to_reg(&instr.operands[0], 8);
-   
-    self.emit((0x09u32 << 26) | (28u32 << 21) | (28u32 << 16) | (((-4i16) as u16) as u32));
-  
+    self.emit((0x09 << 26) | (28 << 21) | (28 << 16) | (((-4i16) as u16) as u32));
     self.emit(0xAF800000 | (28 << 21) | (src << 16));
 }
             // ── POP %dst ─────────────────────────────────
         IrOp::Pop => {
     if instr.operands.is_empty() { return; }
     let dst = self.dest_reg(&instr.operands[0]);
-
     self.emit(0x8F800000 | (28 << 21) | (dst << 16));
-
-    self.emit((0x09u32 << 26) | (28u32 << 21) | (28u32 << 16) | 4u32);
+    self.emit((0x09 << 26) | (28 << 21) | (28 << 16) | 4);
     self.writeback_if_spilled(&instr.operands[0], dst);
+
 }
 
             // ── CAL @label ───────────────────────────────
