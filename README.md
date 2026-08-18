@@ -5,12 +5,12 @@ Core Philosophy
 The language is built on the principle of Byte-Level Validation, where every line of code translates directly into efficient machine instructions. It is designed to operate without a runtime, making it a "pure" tool for building kernels, drivers, and embedded systems.
 
 Project Timeline
-Initial Development: Work on the core architecture and compiler logic began in August 2025.
+Initial Development: Work on the core architecture and compiler logic began in December 2025.
 
 Engine Milestone: The core compiler engine reached its stable, verified state in early 2026, successfully passing logic and memory stress tests.
 
 Current Status
-Last Update: April 5, 2026.
+Last Update: August 18, 2026.
 
 Phase: Transitioning from Compiler Development to Ecosystem Expansion.
 
