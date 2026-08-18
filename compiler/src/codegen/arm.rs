@@ -1,6 +1,5 @@
-// ARM Backend — Stub
-// يُفعَّل بـ --target arm
-// هيتكتب بعد اكتمال الـ MIPS IR-native
+// ARM backend stub
+
 
 use crate::ir::IrModule;
 use crate::codegen::{Backend, SourceMapEntry};

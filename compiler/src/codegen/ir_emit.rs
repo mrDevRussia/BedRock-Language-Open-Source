@@ -1,7 +1,3 @@
-// IR Emit Backend — يطبع BedRock-IR نص
-// يُفعَّل بـ --target ir
-// Output: input.ir
-
 use crate::ir::{IrModule, IrOp};
 use crate::codegen::{Backend, SourceMapEntry};
 

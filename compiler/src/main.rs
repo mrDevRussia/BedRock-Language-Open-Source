@@ -9,9 +9,7 @@ mod ir;
 
 use std::{env, fs, path::Path};
 
-// ─────────────────────────────────────────────────────────
-//  Include processor (unchanged)
-// ─────────────────────────────────────────────────────────
+
 fn process_includes(
     content: String,
     base_path: &Path,
@@ -69,9 +67,7 @@ fn process_includes(
     final_code
 }
 
-// ─────────────────────────────────────────────────────────
-//  Help
-// ─────────────────────────────────────────────────────────
+
 fn print_help() {
     eprintln!(
 r#"BedRock Compiler
@@ -80,7 +76,7 @@ USAGE:
     bedrock <file.br> [OPTIONS]
 
 OPTIONS:
-    --target <arch>     Output target: mips (default), arm, ir
+    --target <arch>     Output target: mips (default), riscv, arm, ir
     --optimize <level>  Optimization level: 1, 2, 3
     --emit-ir           Print IR to stdout and exit (no binary)
     --bridge            Use legacy AST→MIPS path instead of IR→MIPS
@@ -90,6 +86,7 @@ EXAMPLES:
     bedrock os.br                          # compile → MIPS binary (IR pipeline)
     bedrock os.br --target ir              # emit IR text file
     bedrock os.br --target mips            # explicit MIPS (same as default)
+    bedrock os.br --target riscv           # RISC-V (RV32I+M) binary
     bedrock os.br --bridge --target mips   # legacy path (AST direct)
     bedrock os.br --emit-ir                # print IR to stdout
     bedrock os.br --optimize 3 --target mips
@@ -97,9 +94,7 @@ EXAMPLES:
     );
 }
 
-// ─────────────────────────────────────────────────────────
-//  main
-// ─────────────────────────────────────────────────────────
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -108,7 +103,7 @@ fn main() {
         return;
     }
 
-    // ── Flags ────────────────────────────────────────────
+    //Flags
     let source_path = Path::new(&args[1]);
 
     let target_str = args.iter()
@@ -119,10 +114,10 @@ fn main() {
 
     let target = codegen::Target::from_str(target_str);
 
-    // --bridge: يستخدم مسار AST→Codegen القديم بدل IR→Codegen
+
     let use_bridge = args.contains(&"--bridge".to_string());
 
-    // --emit-ir: يطبع IR على stdout ويخرج (بدون binary)
+
     let emit_ir = args.contains(&"--emit-ir".to_string());
 
     let opt_level: u8 = args.iter()
@@ -136,7 +131,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    // ── Read source ──────────────────────────────────────
+
     let source_code = match fs::read_to_string(source_path) {
         Ok(c) => c,
         Err(_) => {
@@ -148,7 +143,7 @@ fn main() {
         }
     };
 
-    // ── Frontend ─────────────────────────────────────────
+
     let base_path = source_path.parent().unwrap_or(Path::new("."));
     let mut included = std::collections::HashSet::new();
     let mut stack    = Vec::new();
@@ -165,13 +160,13 @@ fn main() {
     let mut parser  = parser::Parser::new(tokens);
     let program     = parser.parse_program();
 
-    // ── Analysis ─────────────────────────────────────────
+
     let mut inferencer = type_inference::TypeInferencer::new();
     let program        = inferencer.run(program);
     let mut ver        = verifier::Verifier::new();
     ver.run(&program);
 
-    // ── Optimizer ────────────────────────────────────────
+
     let program = match opt_level {
         1 => optimizer::pruner::Pruner::new().run(program),
         2 => {
@@ -182,10 +177,7 @@ fn main() {
         _ => program,
     };
 
-    // ══════════════════════════════════════════════════════
-    //  PATH A — Bridge (legacy): AST → Codegen → MIPS
-    //  يُفعَّل بـ --bridge --target mips
-    // ══════════════════════════════════════════════════════
+
     if use_bridge {
         eprintln!("[INFO] Mode: BRIDGE (AST → MIPS direct)");
         let mut cg     = codegen::mips::LegacyCodegen::new();
@@ -201,22 +193,19 @@ fn main() {
         return;
     }
 
-    // ══════════════════════════════════════════════════════
-    //  PATH B — IR pipeline (default):
-    //  AST → IrBuilder → IrModule → Backend → binary
-    // ══════════════════════════════════════════════════════
+
     eprintln!("[INFO] Mode: IR pipeline  target={}", target.name());
 
     let mut ir_builder = ir::builder::IrBuilder::new();
     let ir_module      = ir_builder.build(program);
 
-    // --emit-ir: اطبع IR وخرج
+
     if emit_ir {
         ir_module.dump();
         return;
     }
 
-    // اختار الـ backend وكمّل
+ 
     let mut backend = codegen::select_backend(&target);
     let binary      = backend.compile(&ir_module);
 
@@ -225,7 +214,7 @@ fn main() {
     fs::write(&out_path, &binary).expect("[ERROR] Write failed");
     eprintln!("[OK] Written: {}", out_path.display());
 
-    // Source map للـ MIPS IR backend
+
     let map = backend.get_source_map();
     if !map.is_empty() {
         let map_json = serde_json::to_string_pretty(&map).expect("Map failed");

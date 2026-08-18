@@ -468,9 +468,9 @@ fn loop_statement(&mut self) -> Statement {
 }
         
         fn while_statement(&mut self) -> Statement {
-            self.consume(Token::LParen); // استهلاك (
+            self.consume(Token::LParen); 
             let cond = self.parse_expression(); 
-            self.consume(Token::RParen); // استهلاك )
+            self.consume(Token::RParen); 
             
             self.consume(Token::LBrace);
             let mut body = Vec::new();

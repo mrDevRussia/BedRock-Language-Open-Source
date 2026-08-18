@@ -9,12 +9,12 @@ const BASE_ADDR: u32 = 0x80000000;
 const PHYS_REGS: &[u32] = &[10,11,12,13,14,15,16,17,18,19,20,21,24,25];
 
 struct RegAlloc {
-    /// VReg name → physical register number
+  
     map:        HashMap<String, u32>,
-    /// VReg name → stack offset (spilled)
+  
     spilled:    HashMap<String, u32>,
     free:       VecDeque<u32>,
-    spill_base: u32,   // $sp offset لأول spill slot
+    spill_base: u32,   
     next_spill: u32,
 }
 
@@ -24,12 +24,11 @@ impl RegAlloc {
             map:        HashMap::new(),
             spilled:    HashMap::new(),
             free:       PHYS_REGS.iter().copied().collect(),
-            spill_base: 0x100,  // بعد frame الـ function
+            spill_base: 0x100,  
             next_spill: 0x100,
         }
     }
 
-    /// احجز physical reg لـ VReg معين (أو ارجع اللي اتحجزله قبل كده)
     fn alloc(&mut self, name: &str) -> AllocResult {
         if let Some(&r) = self.map.get(name) {
             return AllocResult::Reg(r);
@@ -41,7 +40,7 @@ impl RegAlloc {
             self.map.insert(name.to_string(), r);
             AllocResult::Reg(r)
         } else {
-            // Spill: خد stack slot جديد
+            
             let off = self.next_spill;
             self.next_spill += 4;
             self.spilled.insert(name.to_string(), off);
@@ -49,7 +48,6 @@ impl RegAlloc {
         }
     }
 
-    /// ارجع physical reg لـ VReg لو موجود، لو لأ اعمل temp reg
     fn get(&self, name: &str) -> Option<u32> {
         self.map.get(name).copied()
     }
@@ -73,12 +71,10 @@ impl RegAlloc {
 #[derive(Debug)]
 enum AllocResult {
     Reg(u32),
-    Spill(u32),  // stack offset from $sp
+    Spill(u32),  
 }
 
-// ─────────────────────────────────────────────────────────
-//  MipsBackend  —  IR-native
-// ─────────────────────────────────────────────────────────
+
 pub struct MipsBackend {
     base_addr:   u32,
     little_endian: bool,
@@ -87,20 +83,20 @@ pub struct MipsBackend {
     current_line: usize,
 
     // Symbol tables
-    labels:      HashMap<String, usize>,  // label → code index
-    label_patches: Vec<(usize, String)>,  // (patch_site, label_name)
+    labels:      HashMap<String, usize>,  
+    label_patches: Vec<(usize, String)>,  
 
-    // CF state: الـ CF بيخزن الـ operands للـ JF اللي بعده
-    cf_left:     Option<u32>,   // physical reg للـ left operand
-    cf_right:    Option<u32>,   // physical reg للـ right operand
+   
+    cf_left:     Option<u32>,   
+    cf_right:    Option<u32>,  
 
-    // Register allocator
+    
     alloc:       RegAlloc,
 
-    // Temp regs pool للـ immediates
+   
     temp_pool:   VecDeque<u32>,
 
-    // Data section
+    
 next_data:   u32,
     data_symbols: HashMap<String, u32>,
     root_vars:   std::collections::HashSet<String>,
@@ -131,7 +127,7 @@ impl MipsBackend {
         s.little_endian = true;
         s
     }
-    // ── Emit helpers ─────────────────────────────────────
+  
 
     fn emit(&mut self, instr: u32) {
         let addr = self.base_addr + (self.code.len() as u32 * 4);
@@ -153,11 +149,11 @@ impl MipsBackend {
         let hi = (imm >> 16) & 0xFFFF;
         let lo = imm & 0xFFFF;
         if hi == 0 {
-            self.emit(0x34000000 | (reg << 16) | lo);        // ORI reg, $0, lo
+            self.emit(0x34000000 | (reg << 16) | lo);        
         } else {
-            self.emit(0x3C000000 | (reg << 16) | hi);        // LUI reg, hi
+            self.emit(0x3C000000 | (reg << 16) | hi);        
             if lo != 0 {
-                self.emit(0x34000000 | (reg << 21) | (reg << 16) | lo); // ORI reg, reg, lo
+                self.emit(0x34000000 | (reg << 21) | (reg << 16) | lo); 
             }
         }
     }
@@ -167,9 +163,6 @@ impl MipsBackend {
         (addr >> 2) & 0x03FFFFFF
     }
 
-    // ── Operand → physical reg ────────────────────────────
-    // إما يرجع reg موجود، أو يحمّل الـ immediate في temp reg
-    // temp_reg: reg مؤقت تستخدمه لو الـ operand immediate
 
     fn operand_to_reg(&mut self, op: &Operand, temp_reg: u32) -> u32 {
         match op {
@@ -242,8 +235,7 @@ impl MipsBackend {
         }
     }
 
-    // ── Label resolution ─────────────────────────────────
-
+  
     fn register_label(&mut self, name: &str) {
         self.labels.insert(name.to_string(), self.code.len());
     }
@@ -251,12 +243,12 @@ impl MipsBackend {
     fn patch_label(&mut self, site: usize, label: &str, is_branch: bool) {
         if let Some(&target_idx) = self.labels.get(label) {
             if is_branch {
-                // PC-relative branch offset
+           
                 let offset = (target_idx as i32 - site as i32 - 1) as i16;
                 self.code[site] |= (offset as u16) as u32;
                 self.source_map[site].instruction = self.code[site];
             } else {
-                // J-type absolute
+                
                 let t = self.get_jump_target(target_idx);
                 self.code[site] |= t;
                 self.source_map[site].instruction = self.code[site];
@@ -298,7 +290,7 @@ impl MipsBackend {
     fn emit_j_patch(&mut self, label: &str) -> usize {
         let site = self.code.len();
         self.emit(0x08000000);
-        self.emit(0x00000000);  // delay slot NOP
+        self.emit(0x00000000);  
         self.label_patches.push((site, label.to_string()));
         site
     }
@@ -306,16 +298,16 @@ impl MipsBackend {
     fn emit_branch_patch(&mut self, opcode_bits: u32, rs: u32, rt: u32, label: &str) -> usize {
         let site = self.code.len();
         self.emit(opcode_bits | (rs << 21) | (rt << 16));
-        self.emit(0x00000000);  // delay slot NOP
+        self.emit(0x00000000);  
         self.label_patches.push((site, label.to_string()));
         site
     }
 
-    // ── Main IR emission loop ─────────────────────────────
+   
 
    fn emit_module(&mut self, module: &IrModule) {
 
-        // Pre-pass: اجمع كل الأسماء اللي بتُستخدم كـ Label
+        
         let mut used_as_label: std::collections::HashSet<String> = std::collections::HashSet::new();
         for instr in &module.instructions {
             for op in &instr.operands {
@@ -325,7 +317,7 @@ impl MipsBackend {
             }
         }
 
-        // Pre-pass: سجّل كل Rdf
+      
         for instr in &module.instructions {
             if instr.op == IrOp::Rdf {
                 if let Operand::VReg(name) = &instr.operands[0] {
@@ -345,7 +337,7 @@ impl MipsBackend {
             }
         }
 
-        // Pass 1: سجّل كل الـ MK labels الموجودة
+    
         for (i, instr) in module.instructions.iter().enumerate() {
             if instr.op == IrOp::Mk {
                 if let Some(Operand::Label(name)) = instr.operands.first() {
@@ -354,27 +346,27 @@ impl MipsBackend {
             }
         }
 
-        // Pass 2: emit
+       
         for instr in &module.instructions {
             self.current_line += 1;
             self.emit_instr(instr);
         }
 
-        // Pass 3: resolve forward patches
+        
         self.resolve_patches();
     }
 
     fn emit_instr(&mut self, instr: &crate::ir::IrInstr) {
         match &instr.op {
 
-            // ── MK @label ────────────────────────────────
+           
             IrOp::Mk => {
                 if let Some(Operand::Label(name)) = instr.operands.first() {
                     self.register_label(name);
                 }
             }
 
-            // ── HALT ─────────────────────────────────────
+            
             IrOp::Halt => {
                 let idx = self.code.len();
                 self.emit(0x08000000 | self.get_jump_target(idx));
@@ -411,7 +403,7 @@ IrOp::Rdf => {
             }
     
 
-            // ── DF @name; imm ────────────────────────────
+        
             IrOp::Df => {
                 if instr.operands.len() < 2 { return; }
                 if let (Operand::Label(name), Operand::Imm(val)) =
@@ -419,7 +411,7 @@ IrOp::Rdf => {
                 {
                     let addr = self.next_data;
                     self.data_symbols.insert(name.clone(), addr);
-                    // emit store sequence: LI $t0, val; LI $t1, addr; SW $t0, 0($t1)
+                    
                     let val_reg  = 8u32;
                     let addr_reg = 9u32;
                     self.emit_li(val_reg,  *val as u32);
@@ -429,26 +421,26 @@ IrOp::Rdf => {
                 }
             }
 
-            // ── BRI val TO addr ──────────────────────────
+           
             IrOp::Bri => {
                 if instr.operands.len() < 2 { return; }
                 let val  = self.operand_to_reg(&instr.operands[0], 8);
                 let addr = self.operand_to_reg(&instr.operands[1], 9);
-                // SW val, 0(addr)
+            
                 self.emit(0xAC000000 | (addr << 21) | (val << 16));
             }
 
-            // ── GET %dst FROM addr ───────────────────────
+           
             IrOp::Get => {
                 if instr.operands.len() < 2 { return; }
                 let dst  = self.dest_reg(&instr.operands[0]);
                 let addr = self.operand_to_reg(&instr.operands[1], 9);
-                // LW dst, 0(addr)
+                
                 self.emit(0x8C000000 | (addr << 21) | (dst << 16));
                 self.writeback_if_spilled(&instr.operands[0], dst);
             }
 
-            // ── Arithmetic: ADD SUB MUL DIV ──────────────
+           
         IrOp::Add | IrOp::Sub | IrOp::And | IrOp::Orr | IrOp::Xor => {
                 if instr.operands.len() < 3 { return; }
                 let dst = self.dest_reg(&instr.operands[0]);
@@ -471,8 +463,8 @@ IrOp::Rdf => {
                 let dst = self.dest_reg(&instr.operands[0]);
                 let l   = self.operand_to_reg(&instr.operands[1], 8);
                 let r   = self.operand_to_reg(&instr.operands[2], 9);
-                self.emit(0x00000018 | (l << 21) | (r << 16));  // MULT
-                self.emit(0x00000012 | (dst << 11));              // MFLO
+                self.emit(0x00000018 | (l << 21) | (r << 16));  
+                self.emit(0x00000012 | (dst << 11));              
                 self.writeback_if_spilled(&instr.operands[0], dst);
             }
 
@@ -523,28 +515,25 @@ IrOp::Shr => {
                 if instr.operands.len() < 2 { return; }
                 let dst = self.dest_reg(&instr.operands[0]);
                 let src = self.operand_to_reg(&instr.operands[1], 8);
-                // NOR dst, src, $0  → bitwise NOT
+                
                 self.emit(0x00000027 | (src << 21) | (0 << 16) | (dst << 11));
                 self.writeback_if_spilled(&instr.operands[0], dst);
             }
 
-            // ── CF src1, src2 ────────────────────────────
-            // يحفظ الـ regs للـ JF اللي بعده
             IrOp::Cf => {
                 if instr.operands.len() < 2 { return; }
                 let l = self.operand_to_reg(&instr.operands[0], 8);
                 let r = self.operand_to_reg(&instr.operands[1], 9);
-                // حفظ القيم في dedicated regs عشان الـ JF يستخدمهم
-                // $s6 = 22,  $s7 = 23
-                self.emit(0x00000021 | (l << 21) | (0 << 16) | (22 << 11)); // MOV $s6, l
-                self.emit(0x00000021 | (r << 21) | (0 << 16) | (23 << 11)); // MOV $s7, r
+              
+                self.emit(0x00000021 | (l << 21) | (0 << 16) | (22 << 11)); 
+                self.emit(0x00000021 | (r << 21) | (0 << 16) | (23 << 11)); 
                 self.cf_left  = Some(22);
                 self.cf_right = Some(23);
             }
 
-            // ── JF cond, @label ──────────────────────────
+            
             IrOp::Jf => {
-                // operands[0] = Str(cond),  operands[1] = Label
+                
                 if instr.operands.len() < 2 { return; }
                 let cond = match &instr.operands[0] {
                     Operand::Str(s) => s.clone(),
@@ -558,27 +547,27 @@ IrOp::Shr => {
                 let l = self.cf_left.unwrap_or(22);
                 let r = self.cf_right.unwrap_or(23);
 
-                // اختار الـ branch instruction حسب الـ condition
+               
                 match cond.as_str() {
-                    "==" => { self.emit_branch_patch(0x10000000, l, r, &label); }  // BEQ
-                    "!=" => { self.emit_branch_patch(0x14000000, l, r, &label); }  // BNE
+                    "==" => { self.emit_branch_patch(0x10000000, l, r, &label); }  
+                    "!=" => { self.emit_branch_patch(0x14000000, l, r, &label); } 
                     "<"  => {
-                        // SLT $at, l, r  then  BNE $at, $0, label
+              
                         self.emit(0x0000002A | (l << 21) | (r << 16) | (1 << 11));
                         self.emit_branch_patch(0x14000000, 1, 0, &label);
                     }
                     ">=" => {
-                        // SLT $at, l, r  then  BEQ $at, $0, label
+       
                         self.emit(0x0000002A | (l << 21) | (r << 16) | (1 << 11));
                         self.emit_branch_patch(0x10000000, 1, 0, &label);
                     }
                     ">"  => {
-                        // SLT $at, r, l  then  BNE $at, $0, label
+               
                         self.emit(0x0000002A | (r << 21) | (l << 16) | (1 << 11));
                         self.emit_branch_patch(0x14000000, 1, 0, &label);
                     }
                     "<=" => {
-                        // SLT $at, r, l  then  BEQ $at, $0, label
+         
                         self.emit(0x0000002A | (r << 21) | (l << 16) | (1 << 11));
                         self.emit_branch_patch(0x10000000, 1, 0, &label);
                     }
@@ -589,21 +578,21 @@ IrOp::Shr => {
                 }
             }
 
-            // ── GO @label ────────────────────────────────
+
             IrOp::Go => {
                 if let Some(Operand::Label(label)) = instr.operands.first() {
                     self.emit_j_patch(label);
                 }
             }
 
-            // ── PSH src ──────────────────────────────────
+       
           IrOp::Psh => {
     if instr.operands.is_empty() { return; }
     let src = self.operand_to_reg(&instr.operands[0], 8);
     self.emit((0x09 << 26) | (28 << 21) | (28 << 16) | (((-4i16) as u16) as u32));
     self.emit(0xAF800000 | (28 << 21) | (src << 16));
 }
-            // ── POP %dst ─────────────────────────────────
+
         IrOp::Pop => {
     if instr.operands.is_empty() { return; }
     let dst = self.dest_reg(&instr.operands[0]);
@@ -613,7 +602,6 @@ IrOp::Shr => {
 
 }
 
-            // ── CAL @label ───────────────────────────────
            IrOp::Cal => {
                 if let Some(Operand::Label(label)) = instr.operands.first() {
                     if label.is_empty() { return; }
@@ -625,7 +613,7 @@ IrOp::Shr => {
                     self.emit(0x00000021 | (26 << 21) | (0 << 16) | (31 << 11));
                 }
             }
-            // ── RET [src] ────────────────────────────────
+
             IrOp::Ret => {
                 if let Some(op) = instr.operands.first() {
                     let src = self.operand_to_reg(op, 2);
@@ -636,21 +624,19 @@ IrOp::Shr => {
                 self.emit(0x03E00008);
                 self.emit(0x00000000);
             }
-            // ── INT imm, @handler ────────────────────────
+
             IrOp::Int => {
                 if instr.operands.len() < 2 { return; }
                 if let Operand::Label(handler) = &instr.operands[1] {
-                    // سجّل interrupt vector: emit_li $k0, handler_addr
-                    // الـ address هيتحدد بعد resolution
+            
                     let site = self.code.len();
-                    self.emit(0x3C1A0000);  // LUI $k0, hi(handler)
-                    self.emit(0x375A0000);  // ORI $k0, $k0, lo(handler)
+                    self.emit(0x3C1A0000);  // LUI 
+                    self.emit(0x375A0000);  // ORI 
                     self.label_patches.push((site, handler.clone()));
                 }
             }
 
-            // ── Inb / Outb / Poke / Peek ─────────────────
-            // موجودة في الـ IR كـ system ops منفصلة
+          
             IrOp::Inb => {
                 if instr.operands.len() < 2 { return; }
                 let dst  = self.dest_reg(&instr.operands[0]);
@@ -674,7 +660,7 @@ IrOp::Shr => {
                 self.writeback_if_spilled(&instr.operands[0], dst);
             }
 
-            // ── Asm (raw hex) ────────────────────────────
+            // raw hex assembler
             IrOp::Asm => {
     if let Some(Operand::Str(hex)) = instr.operands.first() {
         if let Ok(word) = u32::from_str_radix(hex.trim(), 16) {
@@ -746,7 +732,7 @@ fn compile(&mut self, module: &IrModule) -> Vec<u8> {
 
 
     for instr in &module.instructions {
-        if instr.op == crate::ir::IrOp::Mov {
+        if instr.op == crate::ir::IrOp::Rdf {
             if let (Some(crate::ir::Operand::VReg(name)), Some(crate::ir::Operand::Imm(val))) =
                 (instr.operands.get(0), instr.operands.get(1))
             {
@@ -760,9 +746,9 @@ fn compile(&mut self, module: &IrModule) -> Vec<u8> {
         }
     }
 
-    // Prologue
+   
     self.emit(0x00000000);
-    self.emit_li(29, self.base_addr + 0x20000);  // SP default لو مفيش STACK
+    self.emit_li(29, self.base_addr + 0x20000); 
 
     self.emit_module(module);
 
@@ -776,11 +762,7 @@ fn compile(&mut self, module: &IrModule) -> Vec<u8> {
     }
 }
 
-// ─────────────────────────────────────────────────────────
-//  LegacyCodegen  —  الكود الأصلي بالظبط
-//  يُستخدم فقط عند --bridge
-//  مش بنغير فيه أي حاجة عشان نضمن مفيش regression
-// ─────────────────────────────────────────────────────────
+
 pub struct LegacyCodegen {
     base_addr: u32,
     code: Vec<u32>,
